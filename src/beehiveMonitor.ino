@@ -57,7 +57,7 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 #include "Adafruit_ADXL343.h"
 
 #define APP_NAME "beehiveMonitor"
-#define VERSION "Version 0.03"
+#define VERSION "Version 0.04"
 
 // comment out if you do NOT want serial logging
 SerialLogHandler logHandler(LOG_LEVEL_ALL);
@@ -82,6 +82,9 @@ SerialLogHandler logHandler(LOG_LEVEL_ALL);
        * added adt7410 support
  * changes in version 0.03:
        * added adxl343 support
+ * changes in version 0.04:
+       * added interrupts with INPUT_PULLDOWN:
+          pinMode(ADXL343_INPUT_PIN_INT1, INPUT_PULLDOWN);
 *******************************************************************************/
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -264,7 +267,9 @@ void loop()
 #endif
 
 #ifdef USE_ADXL343
+
   getAcceleration();
+  // printAccelInfo();
 
   while (g_ints_fired)
   {
@@ -273,16 +278,7 @@ void loop()
     g_ints_fired--;
   }
 
-  char tempChar[LITTLE] = "";
-  uint8_t format = accel.readRegister(ADXL343_REG_THRESH_ACT);
-  snprintf(tempChar, LITTLE, "read: %i", format);
-  Log.info(tempChar);
-
-  format = accel.readRegister(ADXL343_REG_ACT_INACT_CTL);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_ACT_INACT_CTL: %i", format);
-  Log.info(tempChar);
-
-  delay(300);
+  delay(500);
 
 #endif
 }
@@ -499,7 +495,7 @@ void getAcceleration()
 // source: https://learn.adafruit.com/adxl343-breakout-learning-guide/hw-interrupts
 void adxl343_int1_isr(void)
 {
-  Log.info("isr triggered");
+  // Log.info("isr triggered");
   g_int_stats.activity++;
   g_int_stats.total++;
   g_ints_fired++;
@@ -521,7 +517,7 @@ void config_interrupts(void)
    */
 
   /* Attach interrupt inputs on the MCU. */
-  pinMode(ADXL343_INPUT_PIN_INT1, INPUT);
+  pinMode(ADXL343_INPUT_PIN_INT1, INPUT_PULLDOWN);
   // if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, RISING))
   if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, CHANGE))
   {
@@ -552,9 +548,68 @@ void config_interrupts(void)
   g_int_config_map.bits.data_ready = ADXL343_INT2;
   accel.mapInterrupts(g_int_config_map);
 
-  // enable act registers (See datasheet)
-  accel.writeRegister(ADXL343_REG_ACT_INACT_CTL, 0x7f);
-  accel.writeRegister(ADXL343_REG_THRESH_ACT, 0x02);
+  // Register 0x27—ACT_INACT_CTL (Read/Write)
+  // D7        | D6           | D5           | D4
+  // ACT ac/dc | ACT_X enable | ACT_Y enable | ACT_Z enable
+  //
+  // D3          | D2             | D1             | D0
+  // INACT ac/dc | INACT_X enable | INACT_Y enable | INACT_Z enable
+  //
+  // ACT AC/DC and INACT AC/DC Bits
+  // A setting of 0 selects dc-coupled operation, and a setting of 1
+  // enables ac-coupled operation.
+  //
+  // In dc-coupled operation, the
+  // current acceleration magnitude is compared directly with
+  // THRESH_ACT and THRESH_INACT to determine whether
+  // activity or inactivity is detected.
+  //
+  // In ac-coupled operation for activity detection, the acceleration
+  // value at the start of activity detection is taken as a reference
+  // value. New samples of acceleration are then compared to this
+  // reference value, and if the magnitude of the difference exceeds
+  // the THRESH_ACT value, the device triggers an activity interrupt.
+  //
+  // in my understanding, the Z axis will read a value of ~9, which
+  // indicates the acceleration of the gravity, hence if the board is installed
+  // with the accelerometer FLAT, we need to deactivate the z axis trigger
+  // of activity, hence here I write 0110 000 (0x60) which enables only axis x and y
+  accel.writeRegister(ADXL343_REG_ACT_INACT_CTL, 0x60);
+
+  // Register 0x24—THRESH_ACT (Read/Write)
+  // The THRESH_ACT register is eight bits and holds the threshold
+  // value for detecting activity. The data format is unsigned,
+  // therefore, the magnitude of the activity event is compared
+  // with the value in the THRESH_ACT register. The scale factor
+  // is 62.5 mg/LSB. A value of 0 may result in undesirable behavior
+  // if the activity interrupt is enabled.
+  //
+  // in my understanding, this is the SENSITIVITY of the ACTIVITY DETECTION
+  accel.writeRegister(ADXL343_REG_THRESH_ACT, 0x20);
 }
 
+void printAccelInfo()
+{
+  char tempChar[LITTLE] = "";
+
+  uint8_t format = accel.readRegister(ADXL343_REG_INT_ENABLE);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_ENABLE: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_INT_MAP);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_MAP: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_INT_SOURCE);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_SOURCE: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_THRESH_ACT);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_THRESH_ACT: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_ACT_INACT_CTL);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_ACT_INACT_CTL: %i", format);
+  Log.info(tempChar);
+}
 #endif
