@@ -57,14 +57,18 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 #include "Adafruit_ADXL343.h"
 
 #define APP_NAME "beehiveMonitor"
-#define VERSION "Version 0.02"
+#define VERSION "Version 0.03"
 
 // comment out if you do NOT want serial logging
 SerialLogHandler logHandler(LOG_LEVEL_ALL);
 
+// #define DEBUGGING
+// #define NO_CELLULAR
+
 #define ALWAYS_ONLINE
 // #define USE_SOLAR_PANEL
 #define USE_ADT7410
+#define USE_ADXL343
 #define USE_DS18B20
 #define DS18B20_PIN D9
 
@@ -76,6 +80,8 @@ SerialLogHandler logHandler(LOG_LEVEL_ALL);
        * removed legacy Serial logs, added newer SerialLogHandler
        * removed use_adt7410, etc since they created trouble when building for boron or xenon
        * added adt7410 support
+ * changes in version 0.03:
+       * added adxl343 support
 *******************************************************************************/
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -134,6 +140,56 @@ float temp_ADT7410_fahrenheit;
 ^^^^    ADT7410 related    ^^^^
 *******************************************************************************/
 
+/*******************************************************************************
+vvvv    ADXL343 related    vvvv
+*******************************************************************************/
+#ifdef USE_ADXL343
+Adafruit_ADXL343 accel = Adafruit_ADXL343(12345);
+
+/** The input pin to enable the interrupt on, connected to INT1 on the ADXL. */
+#define ADXL343_INPUT_PIN_INT1 A0
+
+// leave only one
+// #define ADXL343_RANGE ADXL343_RANGE_16_G
+// #define ADXL343_RANGE ADXL343_RANGE_8_G
+// #define ADXL343_RANGE ADXL343_RANGE_4_G
+#define ADXL343_RANGE ADXL343_RANGE_2_G
+
+/**
+ * This struct is used to count the number of times that specific interrutps
+ * have been fired by the ADXL and detected on the MCU. They will increment
+ * by one for each event associated with the specified interrupt 'bit'.
+ */
+struct adxl_int_stats
+{
+  uint32_t data_ready;
+  uint32_t single_tap;
+  uint32_t double_tap;
+  uint32_t activity;
+  uint32_t inactivity;
+  uint32_t freefall;
+  uint32_t watermark;
+  uint32_t overrun;
+  uint32_t total;
+};
+
+/** Global stats block, incremented inside the interrupt handler(s). */
+struct adxl_int_stats g_int_stats = {0};
+
+/** Global counter to track the numbers of unused interrupts fired. */
+uint32_t g_ints_fired = 0;
+
+/** Global variable to determine which interrupt(s) are enabled on the ADXL343. */
+int_config g_int_config_enabled = {0};
+
+/** Global variables to determine which INT pin interrupt(s) are mapped to on the ADXL343. */
+int_config g_int_config_map = {0};
+
+#endif
+/*******************************************************************************
+^^^^    ADT7410 related    ^^^^
+*******************************************************************************/
+
 #define LITTLE 50
 
 bool publishStatusFlag = false;
@@ -145,6 +201,11 @@ bool movementDetected = false;
  *******************************************************************************/
 void setup()
 {
+
+  // I'm playing with the device next to me
+#ifdef NO_CELLULAR
+  Cellular.off();
+#endif
 
   Particle.function("forcePublishStatus", forcePublishStatus);
 
@@ -174,6 +235,19 @@ void setup()
   tempsensor_ADT7410.begin();
 #endif
 
+#ifdef USE_ADXL343
+  if (!accel.begin())
+  {
+    Log.error("Ooops, no ADXL343 detected ... Check your wiring!");
+  }
+
+  /* Set the range to whatever is appropriate for your project */
+  accel.setRange(ADXL343_RANGE);
+
+  /* Configure the HW interrupts. */
+  config_interrupts();
+
+#endif
 }
 
 /*******************************************************************************
@@ -187,6 +261,29 @@ void loop()
 
 #if PLATFORM_ID == PLATFORM_XENON
   smoothBATT();
+#endif
+
+#ifdef USE_ADXL343
+  getAcceleration();
+
+  while (g_ints_fired)
+  {
+    Log.info("ACTIVITY detected!");
+    /* Decrement the unhandled int counter. */
+    g_ints_fired--;
+  }
+
+  char tempChar[LITTLE] = "";
+  uint8_t format = accel.readRegister(ADXL343_REG_THRESH_ACT);
+  snprintf(tempChar, LITTLE, "read: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_ACT_INACT_CTL);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_ACT_INACT_CTL: %i", format);
+  Log.info(tempChar);
+
+  delay(300);
+
 #endif
 }
 
@@ -203,6 +300,10 @@ void publishStatus()
 #endif
 #ifdef USE_ADT7410
   getTempADT7410();
+#endif
+
+#ifdef USE_ADXL343
+  displaySensorDetails();
 #endif
 
   char tempChar[LITTLE] = "";
@@ -324,6 +425,7 @@ void getTempDS18B20()
   Log.info(tempChar);
 }
 #endif
+
 /*******************************************************************************
  * Function Name  : getTempADT7410
  * Description    : get reading from the ADT7410 sensor
@@ -342,4 +444,117 @@ void getTempADT7410()
   snprintf(tempChar, LITTLE, "adt7410 celsius: %.2f", temp_ADT7410_celsius);
   Log.info(tempChar);
 }
+#endif
+
+/*******************************************************************************
+ * Function Name  : displaySensorDetails
+ * Description    : display some info from the accelerometer
+ *******************************************************************************/
+#ifdef USE_ADXL343
+void displaySensorDetails()
+{
+  char tempChar[LITTLE] = "";
+
+  sensor_t sensor;
+  accel.getSensor(&sensor);
+  Log.info("------------------------------------");
+  Log.info("Sensor:       ");
+  Log.info(sensor.name);
+  snprintf(tempChar, LITTLE, "Driver Ver: %li", sensor.version);
+  Log.info(tempChar);
+  // Log.info("Unique ID:    ");
+  // Log.info(sensor.sensor_id);
+  // Log.info("Max Value:    ");
+  // Log.info(sensor.max_value); Log.info(" m/s^2");
+  // Log.info("Min Value:    ");
+  // Log.info(sensor.min_value); Log.info(" m/s^2");
+  // Log.info("Resolution:   ");
+  // Log.info(sensor.resolution); Log.info(" m/s^2");
+  Log.info("------------------------------------");
+}
+
+/*******************************************************************************
+ * Function Name  : getAcceleration
+ * Description    : get more info from the accelerometer
+ *******************************************************************************/
+void getAcceleration()
+{
+  sensors_event_t event;
+  accel.getEvent(&event);
+  char tempChar[LITTLE] = "";
+
+  /* Display the results (acceleration is measured in m/s^2) */
+  Log.info("------------------------------------");
+  snprintf(tempChar, LITTLE, "X: %.2f", event.acceleration.x);
+  Log.info(tempChar);
+  snprintf(tempChar, LITTLE, "y: %.2f", event.acceleration.y);
+  Log.info(tempChar);
+  snprintf(tempChar, LITTLE, "z: %.2f", event.acceleration.z);
+  Log.info(tempChar);
+  Log.info("------------------------------------");
+  delay(500);
+}
+
+/** Interrupt service routine for INT1 events. */
+// source: https://learn.adafruit.com/adxl343-breakout-learning-guide/hw-interrupts
+void adxl343_int1_isr(void)
+{
+  Log.info("isr triggered");
+  g_int_stats.activity++;
+  g_int_stats.total++;
+  g_ints_fired++;
+}
+
+/** Configures the HW interrupts on the ADXL343 and the target MCU. */
+// source: https://learn.adafruit.com/adxl343-breakout-learning-guide/hw-interrupts
+void config_interrupts(void)
+{
+  /* NOTE: Once an interrupt fires on the ADXL you can read a register
+   *  to know the source of the interrupt, but since this would likely
+   *  happen in the 'interrupt context' performing an I2C read is a bad
+   *  idea since it will block the device from handling other interrupts
+   *  in a timely manner.
+   *
+   *  The best approach is to try to make use of only two interrupts on
+   *  two different interrupt pins, so that when an interrupt fires, based
+   *  on the 'isr' function that is called, you already know the int source.
+   */
+
+  /* Attach interrupt inputs on the MCU. */
+  pinMode(ADXL343_INPUT_PIN_INT1, INPUT);
+  // if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, RISING))
+  if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, CHANGE))
+  {
+    Log.error("Could not attach interrupt to pin!");
+  }
+
+  /* Enable interrupts on the accelerometer. */
+
+  /* Enable interrupts on the accelerometer. */
+  g_int_config_enabled.bits.overrun = false;
+  g_int_config_enabled.bits.watermark = false;
+  g_int_config_enabled.bits.freefall = false;
+  g_int_config_enabled.bits.inactivity = false;
+  g_int_config_enabled.bits.activity = true; /* Set the INT1 */
+  g_int_config_enabled.bits.double_tap = false;
+  g_int_config_enabled.bits.single_tap = false;
+  g_int_config_enabled.bits.data_ready = false;
+  accel.enableInterrupts(g_int_config_enabled);
+
+  /* Map specific interrupts to one of the two INT pins. */
+  g_int_config_map.bits.overrun = ADXL343_INT1;
+  g_int_config_map.bits.watermark = ADXL343_INT1;
+  g_int_config_map.bits.freefall = ADXL343_INT1;
+  g_int_config_map.bits.inactivity = ADXL343_INT1;
+  g_int_config_map.bits.activity = ADXL343_INT1;
+  g_int_config_map.bits.double_tap = ADXL343_INT1;
+  g_int_config_map.bits.single_tap = ADXL343_INT1;
+  g_int_config_map.bits.data_ready = ADXL343_INT2;
+  accel.mapInterrupts(g_int_config_map);
+
+  // enable act registers (See datasheet)
+  accel.writeRegister(ADXL343_REG_ACT_INACT_CTL, 0x7f);
+  accel.writeRegister(ADXL343_REG_THRESH_ACT, 0x02);
+}
+
 #endif
