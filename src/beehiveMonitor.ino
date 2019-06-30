@@ -219,7 +219,8 @@ vvvv    Finite State Machine related    vvvv
 *******************************************************************************/
 #ifdef USE_ADXL343
 // min amount of time to stay in alarm before coming back to normal in millis
-#define MOVEMENT_DETECTED_TIMEOUT 30000
+// this delays the sending out of alarm
+#define MOVEMENT_DETECTED_TIMEOUT 10000
 
 #define STATE_OK "OK State"
 #define STATE_ALARM "Alarm State"
