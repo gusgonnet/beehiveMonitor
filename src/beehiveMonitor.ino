@@ -9,7 +9,7 @@
 PINOUT DS18B20
 D9 - DS18B20
 
-/*******************************************************************************
+********************************************************************************
 PINOUT ADT7410 https://learn.adafruit.com/adt7410-breakout/pinouts
 
 VIN: This is the voltage input to power for the sensor. 
@@ -23,7 +23,7 @@ SDA: This is the I2C data line, which is pulled high to the same logic level as 
 
 The I2C address on the ADT7410 will default to 0X48.
 
-/*******************************************************************************
+********************************************************************************
 PINOUT ADXL343 https://learn.adafruit.com/adxl343-breakout-learning-guide/pinout
 
 VIN - This is the input to the 3.3V voltage regulator, which makes it possible to use the 3.3V sensor on 5V systems. 
@@ -51,26 +51,35 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 
 *******************************************************************************/
 
-// #include "lib/elapsedMillis/elapsedMillis.h"
 #include "AnalogSmooth.h"
 #include "Adafruit_ADT7410.h"
 #include "Adafruit_ADXL343.h"
+#include "../lib/FiniteStateMachine/src/FiniteStateMachine.h"
 
 #define APP_NAME "beehiveMonitor"
-#define VERSION "Version 0.04"
+#define VERSION "Version 0.05"
 
-// comment out if you do NOT want serial logging
-SerialLogHandler logHandler(LOG_LEVEL_ALL);
-
-// #define DEBUGGING
+#define DEBUGGING
 // #define NO_CELLULAR
 
 #define ALWAYS_ONLINE
+
+// sleep if battery is low for some time (4 hours?) units: SECONDS
+#define LOW_BATTERY_SLEEP 14400
+
+// if not always online, sleep for this time - units: SECONDS
+#define NORMAL_SLEEP_CYCLE 600
+
 // #define USE_SOLAR_PANEL
 #define USE_ADT7410
 #define USE_ADXL343
 #define USE_DS18B20
 #define DS18B20_PIN D9
+
+// comment out if you do NOT want serial logging
+#ifdef DEBUGGING
+SerialLogHandler logHandler(LOG_LEVEL_ALL);
+#endif
 
 /*******************************************************************************
  * changes in version 0.01:
@@ -85,6 +94,14 @@ SerialLogHandler logHandler(LOG_LEVEL_ALL);
  * changes in version 0.04:
        * added interrupts with INPUT_PULLDOWN:
           pinMode(ADXL343_INPUT_PIN_INT1, INPUT_PULLDOWN);
+ * changes in version 0.05:
+       * added sleep and wake on pin interrupt
+       * added sleep on low batt
+
+TODO:
+ * check this xenon voltage formula out:
+     battVoltage = analogRead(BATT) * 0.0011224 / 3.7 * 100;
+     source: https://blog.particle.io/2019/06/26/get-started-with-ble-and-nfc/
 *******************************************************************************/
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -149,6 +166,11 @@ vvvv    ADXL343 related    vvvv
 #ifdef USE_ADXL343
 Adafruit_ADXL343 accel = Adafruit_ADXL343(12345);
 
+// in my understanding, this is the SENSITIVITY of the ACTIVITY DETECTION
+// 0x20: if I tap on the table the board is, the device wakes up
+// 0x50: I need to tap hard
+#define ADXL343_SENSITIVITY 0x50
+
 /** The input pin to enable the interrupt on, connected to INT1 on the ADXL. */
 #define ADXL343_INPUT_PIN_INT1 A0
 
@@ -193,10 +215,41 @@ int_config g_int_config_map = {0};
 ^^^^    ADT7410 related    ^^^^
 *******************************************************************************/
 
+/*******************************************************************************
+vvvv    Finite State Machine related    vvvv
+*******************************************************************************/
+#ifdef USE_ADXL343
+// min amount of time to stay in alarm before coming back to normal in millis
+#define MOVEMENT_DETECTED_TIMEOUT 30000
+
+#define STATE_OK "OK State"
+#define STATE_ALARM "Alarm State"
+
+// FSM declaration for water sensor
+State accelerometerOkState = State(accelerometerOkEnterFunction, accelerometerOkUpdateFunction, accelerometerOkExitFunction);
+State accelerometerAlarmState = State(accelerometerAlarmEnterFunction, accelerometerAlarmUpdateFunction, accelerometerAlarmExitFunction);
+FSM accelerometerStateMachine = FSM(accelerometerOkState);
+String accelerometerState = STATE_OK;
+#endif
+
+/*******************************************************************************
+^^^^    Finite State Machine related    ^^^^
+*******************************************************************************/
+
 #define LITTLE 50
 
 bool publishStatusFlag = false;
 bool movementDetected = false;
+
+// this variable is used to skip running code in always online devices
+// when they come back from sleep we do not want to run code
+// we want them to check the battery again just in case is still low
+bool justCameBackFromSleep = false;
+
+// This class allows to query the information about the latest System.sleep().
+// if wake up reason is pin or timer
+// https://docs.particle.io/reference/device-os/firmware/photon/#sleepresult-class
+SleepResult result = System.sleepResult();
 
 /*******************************************************************************
  * Function Name  : setup
@@ -204,13 +257,26 @@ bool movementDetected = false;
  *******************************************************************************/
 void setup()
 {
+  // cloud functions
+  // Up to 15 cloud functions may be registered and each function name is limited to
+  // a maximum of 12 characters (prior to 0.8.0), 64 characters (since 0.8.0).
+  // https://docs.particle.io/reference/device-os/firmware/boron/#particle-function-
+  Particle.function("forcePublishStatus", forcePublishStatus);
+
+  // cloud variables
+  // Up to 20 cloud variables may be registered and each variable name is limited to
+  // a maximum of 12 characters (prior to 0.8.0), 64 characters (since 0.8.0).
+  // https://docs.particle.io/reference/device-os/firmware/boron/#particle-variable-
+#ifdef USE_ADXL343
+  Particle.variable("AccelerometerState", accelerometerState);
+
+  pinMode(ADXL343_INPUT_PIN_INT1, INPUT_PULLDOWN);
+#endif
 
   // I'm playing with the device next to me
 #ifdef NO_CELLULAR
   Cellular.off();
 #endif
-
-  Particle.function("forcePublishStatus", forcePublishStatus);
 
 #ifdef USE_SOLAR_PANEL
 #if PLATFORM_ID == PLATFORM_BORON
@@ -244,44 +310,92 @@ void setup()
     Log.error("Ooops, no ADXL343 detected ... Check your wiring!");
   }
 
-  /* Set the range to whatever is appropriate for your project */
-  accel.setRange(ADXL343_RANGE);
-
-  /* Configure the HW interrupts. */
-  config_interrupts();
-
+  accelConfiguration();
 #endif
 }
 
 /*******************************************************************************
- * Function Name  : loop
+ * Function Name  : loop for always online devices
  * Description    : this function runs continuously while the project is running
  *******************************************************************************/
-void loop()
+#ifdef ALWAYS_ONLINE
+void loop() // loop for always online devices
 {
-  // check if the forcePublishStatus cloud function was called
-  checkPublishStatusFlag();
 
 #if PLATFORM_ID == PLATFORM_XENON
   smoothBATT();
 #endif
 
+  // go to sleep if low battery
+  checkLowBattery();
+
+  // execute the code if not coming back from sleep
+  // if the code is just coming back from sleep, and the sleep
+  // was done due to low bat, we will potentially waste battery running this code
+  if (not justCameBackFromSleep)
+  {
+
+#ifdef USE_ADXL343
+    getAcceleration();
+    // printAccelInfo();
+    // accelDetected();
+    accelerometerStateMachine.update();
+#endif
+
+    // check if the forcePublishStatus cloud function was called
+    checkPublishStatusFlag();
+
+#ifdef DEBUGGING
+    delay(500);
+#endif
+  }
+}
+#endif
+
+/*******************************************************************************
+ * Function Name  : loop for devices that sleep
+ * Description    : this function runs continuously while the project is running
+ *******************************************************************************/
+#ifndef ALWAYS_ONLINE
+void loop() // loop for devices that sleep
+{
+
+#if PLATFORM_ID == PLATFORM_XENON
+  smoothBATT();
+#endif
+
+  // go to sleep if low battery
+  checkLowBattery();
+
 #ifdef USE_ADXL343
 
-  getAcceleration();
-  // printAccelInfo();
+#ifdef DEBUGGING
+  // if I don't delay this, the Log.info below does not print anything since the serial port
+  // takes a bit to connect to the device
+  delay(8000);
+#endif
 
-  while (g_ints_fired)
+  if (result.wokenUpByPin())
   {
-    Log.info("ACTIVITY detected!");
-    /* Decrement the unhandled int counter. */
-    g_ints_fired--;
+    Log.info("Device was woken up by a pin");
+    movementDetected = true;
   }
 
-  delay(500);
+  if (result.wokenUpByRtc())
+  {
+    Log.info("Device was woken up by the timer");
+    movementDetected = false;
+  }
 
 #endif
+
+  // publish the info before going to sleep
+  publishStatus();
+
+  System.sleep(ADXL343_INPUT_PIN_INT1, RISING, NORMAL_SLEEP_CYCLE);
+  result = System.sleepResult();
 }
+#endif
 
 /*******************************************************************************
  * Function Name  : publishStatus
@@ -289,25 +403,19 @@ void loop()
  *******************************************************************************/
 void publishStatus()
 {
-
-  //refresh readings
 #ifdef USE_DS18B20
   getTempDS18B20();
 #endif
+
 #ifdef USE_ADT7410
   getTempADT7410();
 #endif
-
-#ifdef USE_ADXL343
-  displaySensorDetails();
-#endif
-
-  char tempChar[LITTLE] = "";
 
 #define BUFFER 623
   char pubChar[BUFFER] = "";
   snprintf(pubChar, BUFFER, "Movement: %d", movementDetected);
 
+  char tempChar[LITTLE] = "";
 #if PLATFORM_ID == PLATFORM_BORON
   snprintf(tempChar, LITTLE, ", SoC: %.2f%%", batteryMonitor.getSoC());
   strcat(pubChar, tempChar);
@@ -342,7 +450,13 @@ void publishStatus()
   strcat(pubChar, tempChar);
 #endif
 
+  Log.info(pubChar);
   Particle.publish("STATUS", pubChar, PRIVATE | WITH_ACK);
+
+#ifndef ALWAYS_ONLINE
+  // leave time to publish to go out
+  delay(4000);
+#endif
 }
 
 /*******************************************************************************
@@ -380,6 +494,32 @@ void smoothBATT()
   // source: https://github.com/kennethlimcp/particle-examples/blob/master/vbatt-argon-boron/vbatt-argon-boron.ino
   float analog = analogRead(BATT) * 0.0011224;
   batteryReading = analogSmoothBATT.smooth(analog);
+#endif
+}
+
+/*******************************************************************************
+ * Function Name  : checkLowBattery
+ * Description    : protect the device from low batt situations
+ *******************************************************************************/
+void checkLowBattery()
+{
+  justCameBackFromSleep = false;
+
+#if PLATFORM_ID == PLATFORM_BORON
+  // send it to sleep if no more battery
+  if (batteryMonitor.getSoC() < 20)
+  {
+    System.sleep(ADXL343_INPUT_PIN_INT1, RISING, LOW_BATTERY_SLEEP);
+    justCameBackFromSleep = true;
+  }
+#endif
+#if PLATFORM_ID == PLATFORM_XENON
+  // send it to sleep if no more battery
+  if (batteryReading < CRITICAL_BATTERY_XENON)
+  {
+    System.sleep(ADXL343_INPUT_PIN_INT1, RISING, LOW_BATTERY_SLEEP);
+    justCameBackFromSleep = true;
+  }
 #endif
 }
 
@@ -488,6 +628,8 @@ void getAcceleration()
   snprintf(tempChar, LITTLE, "z: %.2f", event.acceleration.z);
   Log.info(tempChar);
   Log.info("------------------------------------");
+  Log.info(VERSION);
+
   delay(500);
 }
 
@@ -499,11 +641,37 @@ void adxl343_int1_isr(void)
   g_int_stats.activity++;
   g_int_stats.total++;
   g_ints_fired++;
+  movementDetected = true;
 }
 
-/** Configures the HW interrupts on the ADXL343 and the target MCU. */
+void printAccelInfo()
+{
+  char tempChar[LITTLE] = "";
+
+  uint8_t format = accel.readRegister(ADXL343_REG_INT_ENABLE);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_ENABLE: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_INT_MAP);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_MAP: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_INT_SOURCE);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_SOURCE: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_THRESH_ACT);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_THRESH_ACT: %i", format);
+  Log.info(tempChar);
+
+  format = accel.readRegister(ADXL343_REG_ACT_INACT_CTL);
+  snprintf(tempChar, LITTLE, "read ADXL343_REG_ACT_INACT_CTL: %i", format);
+  Log.info(tempChar);
+}
+
+/** Configures range, HW interrupts on the ADXL343 and the target MCU. */
 // source: https://learn.adafruit.com/adxl343-breakout-learning-guide/hw-interrupts
-void config_interrupts(void)
+void accelConfiguration(void)
 {
   /* NOTE: Once an interrupt fires on the ADXL you can read a register
    *  to know the source of the interrupt, but since this would likely
@@ -516,15 +684,18 @@ void config_interrupts(void)
    *  on the 'isr' function that is called, you already know the int source.
    */
 
+  // this is not needed when the device sleeps
+#ifdef ALWAYS_ONLINE
   /* Attach interrupt inputs on the MCU. */
-  pinMode(ADXL343_INPUT_PIN_INT1, INPUT_PULLDOWN);
-  // if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, RISING))
-  if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, CHANGE))
+  if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, RISING))
+  // if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, CHANGE))
   {
     Log.error("Could not attach interrupt to pin!");
   }
+#endif
 
-  /* Enable interrupts on the accelerometer. */
+  /* Set the range to whatever is appropriate for your project */
+  accel.setRange(ADXL343_RANGE);
 
   /* Enable interrupts on the accelerometer. */
   g_int_config_enabled.bits.overrun = false;
@@ -585,31 +756,98 @@ void config_interrupts(void)
   // if the activity interrupt is enabled.
   //
   // in my understanding, this is the SENSITIVITY of the ACTIVITY DETECTION
-  accel.writeRegister(ADXL343_REG_THRESH_ACT, 0x20);
+  // 0x20: if I tap on the table the board is, the device wakes up
+  accel.writeRegister(ADXL343_REG_THRESH_ACT, ADXL343_SENSITIVITY);
 }
 
-void printAccelInfo()
+void accelDetected()
 {
-  char tempChar[LITTLE] = "";
-
-  uint8_t format = accel.readRegister(ADXL343_REG_INT_ENABLE);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_ENABLE: %i", format);
-  Log.info(tempChar);
-
-  format = accel.readRegister(ADXL343_REG_INT_MAP);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_MAP: %i", format);
-  Log.info(tempChar);
-
-  format = accel.readRegister(ADXL343_REG_INT_SOURCE);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_SOURCE: %i", format);
-  Log.info(tempChar);
-
-  format = accel.readRegister(ADXL343_REG_THRESH_ACT);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_THRESH_ACT: %i", format);
-  Log.info(tempChar);
-
-  format = accel.readRegister(ADXL343_REG_ACT_INACT_CTL);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_ACT_INACT_CTL: %i", format);
-  Log.info(tempChar);
+  while (g_ints_fired)
+  {
+    Log.info("ACTIVITY detected!");
+    /* Decrement the unhandled int counter. */
+    g_ints_fired--;
+  }
 }
+
 #endif
+
+/*******************************************************************************
+********************************************************************************
+********************************************************************************
+ FINITE STATE MACHINE FUNCTIONS
+********************************************************************************
+********************************************************************************
+*******************************************************************************/
+
+/*******************************************************************************
+ WATER LEAK sensor
+*******************************************************************************/
+void accelerometerOkEnterFunction()
+{
+#ifdef DEBUGGING
+  Particle.publish("OK", "Accelerometer is OK", PRIVATE | WITH_ACK);
+#endif
+  accelerometerSetState(STATE_OK);
+}
+void accelerometerOkUpdateFunction()
+{
+
+  while (g_ints_fired)
+  {
+    Log.info("ACTIVITY detected!");
+    /* Decrement the unhandled int counter. */
+    g_ints_fired--;
+  }
+
+  if (movementDetected)
+  {
+    accelerometerStateMachine.transitionTo(accelerometerAlarmState);
+    Log.info("Movement detected, transition to accelerometerAlarmState");
+  }
+}
+void accelerometerOkExitFunction()
+{
+}
+
+void accelerometerAlarmEnterFunction()
+{
+#ifdef DEBUGGING
+  Particle.publish("ALARM", "Accelerometer detected movement", PRIVATE | WITH_ACK);
+#endif
+  accelerometerSetState(STATE_ALARM);
+}
+void accelerometerAlarmUpdateFunction()
+{
+  // stay here a minimum time
+  if (accelerometerStateMachine.timeInCurrentState() < MOVEMENT_DETECTED_TIMEOUT)
+  {
+    return;
+  }
+
+  // publish the info before going to ok state
+  publishStatus();
+
+  accelerometerStateMachine.transitionTo(accelerometerOkState);
+  Log.info("Alarm sent, transition to accelerometerOkState");
+}
+void accelerometerAlarmExitFunction()
+{
+  // clear flag of fired accel events
+  g_ints_fired = 0;
+  movementDetected = false;
+}
+
+/*******************************************************************************
+ * Function Name  : accelerometerSetState
+ * Description    : sets the state of an FSM
+ * Return         : none
+ *******************************************************************************/
+void accelerometerSetState(String newState)
+{
+  accelerometerState = newState;
+#ifdef DEBUGGING
+  Particle.publish("FSM", "Accelerometer fsm entering " + newState + " state", PRIVATE | WITH_ACK);
+#endif
+  Log.info("Accelerometer fsm entering " + newState + " state");
+}
