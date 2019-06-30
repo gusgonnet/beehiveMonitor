@@ -60,7 +60,6 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 #define VERSION "Version 0.05"
 
 #define DEBUGGING
-// #define NO_CELLULAR
 
 #define ALWAYS_ONLINE
 
@@ -271,11 +270,6 @@ void setup()
   Particle.variable("AccelerometerState", accelerometerState);
 
   pinMode(ADXL343_INPUT_PIN_INT1, INPUT_PULLDOWN);
-#endif
-
-  // I'm playing with the device next to me
-#ifdef NO_CELLULAR
-  Cellular.off();
 #endif
 
 #ifdef USE_SOLAR_PANEL
@@ -507,7 +501,7 @@ void checkLowBattery()
 
 #if PLATFORM_ID == PLATFORM_BORON
   // send it to sleep if no more battery
-  if (batteryMonitor.getSoC() < 20)
+  if (batteryMonitor.getSoC() < CRITICAL_BATTERY_BORON)
   {
     System.sleep(ADXL343_INPUT_PIN_INT1, RISING, LOW_BATTERY_SLEEP);
     justCameBackFromSleep = true;
