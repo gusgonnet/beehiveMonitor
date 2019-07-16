@@ -57,11 +57,11 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 #include "../lib/FiniteStateMachine/src/FiniteStateMachine.h"
 
 #define APP_NAME "beehiveMonitor"
-#define VERSION "Version 0.05"
+#define VERSION "Version 0.06"
 
 #define DEBUGGING
 
-#define ALWAYS_ONLINE
+// #define ALWAYS_ONLINE
 
 // sleep if battery is low for some time (4 hours?) units: SECONDS
 #define LOW_BATTERY_SLEEP 14400
@@ -96,12 +96,16 @@ SerialLogHandler logHandler(LOG_LEVEL_ALL);
  * changes in version 0.05:
        * added sleep and wake on pin interrupt
        * added sleep on low batt
+ * changes in version 0.06:
+       * adding location: #define LOCATION "bees1"
 
 TODO:
  * check this xenon voltage formula out:
      battVoltage = analogRead(BATT) * 0.0011224 / 3.7 * 100;
      source: https://blog.particle.io/2019/06/26/get-started-with-ble-and-nfc/
 *******************************************************************************/
+
+#define LOCATION "bees1"
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
 // source: https://docs.particle.io/reference/firmware/photon/#system-thread
@@ -408,7 +412,7 @@ void publishStatus()
 
 #define BUFFER 623
   char pubChar[BUFFER] = "";
-  snprintf(pubChar, BUFFER, "Movement: %d", movementDetected);
+  snprintf(pubChar, BUFFER, "Location: %s, Movement: %d", LOCATION, movementDetected);
 
   char tempChar[LITTLE] = "";
 #if PLATFORM_ID == PLATFORM_BORON
