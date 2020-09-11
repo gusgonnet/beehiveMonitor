@@ -61,7 +61,7 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 
 #define DEBUGGING
 
-// #define ALWAYS_ONLINE
+#define ALWAYS_ONLINE
 
 // sleep if battery is low for some time (4 hours?) units: SECONDS
 #define LOW_BATTERY_SLEEP 14400
@@ -779,9 +779,6 @@ void accelDetected()
 ********************************************************************************
 *******************************************************************************/
 
-/*******************************************************************************
- WATER LEAK sensor
-*******************************************************************************/
 void accelerometerOkEnterFunction()
 {
 #ifdef DEBUGGING
