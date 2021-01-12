@@ -6,6 +6,8 @@ Ported from the [Arduino Finite State Machine library](http://playground.arduino
 
 All credit goes to the original author: [Alexander Brevig](alexanderbrevig@gmail.com).
 
+Why FSMs? [Please read this write-up](https://www.hackster.io/gusgonnet/using-finite-state-machines-fdba04)
+
 # Finite State Machine Description
 
 A FSM serves as a manager that organizes a set of states, or behaviors.
@@ -88,6 +90,29 @@ _boolean isInState( State &state )_ :
 Check if state is equal to the current state of the FSM
 
 ---
+
+## Typed States
+
+To avoid mistakes mixing states from different states machines together, use the strongly typed state variant. The compiler will throw an error if you mix states.
+
+Use `DECLARE_STATE` to create a named `State` class for each of your state machines and pass that class when creating the state machine. All the methods of the named `State` class and the typed state machine `FSMT` are the same as the generic variant of `State` and `FSM`.
+
+_FiniteStateMachineTyped<StateType>(StateType& current)_
+
+_FSMT<StateType>(StateType& current)_
+
+Example:
+
+```
+DECLARE_STATE(ConnectivityState);
+ConnectivityState disconnectedState(waitForConnection);
+ConnectivityState connectedState(waitForDisconnection);
+FSMT<ConnectivityState> connectivityStateMachine(disconnectedState);
+
+// Assuming brewCoffeState is a CoffeeState from a different state machine this would fail with a compiler error
+connectivityStateMachine.transitionTo(brewCoffeState);
+// error: no matching function for call to 'FiniteStateMachineTyped<ConnectivityState>::transitionTo(CoffeeState&)'
+```
 
 # Example
 

@@ -1,3 +1,9 @@
+/******************************************************/
+//       THIS IS A GENERATED FILE - DO NOT EDIT       //
+/******************************************************/
+
+#include "Particle.h"
+#line 1 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
 /*
  * Project beehiveMonitor
  * Description: monitor the state of beehives
@@ -56,6 +62,29 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 #include "Adafruit_ADXL343.h"
 #include "../lib/FiniteStateMachine/src/FiniteStateMachine.h"
 
+void setup();
+void loop();
+void loop();
+void publishStatus();
+void checkPublishStatusFlag();
+int forcePublishStatus(String dummy);
+void checkLowBattery();
+void getTempDS18B20();
+void getTempADT7410();
+void displaySensorDetails();
+void getAcceleration();
+void adxl343_int1_isr(void);
+void printAccelInfo();
+void accelConfiguration(void);
+void accelDetected();
+void accelerometerOkEnterFunction();
+void accelerometerOkUpdateFunction();
+void accelerometerOkExitFunction();
+void accelerometerAlarmEnterFunction();
+void accelerometerAlarmUpdateFunction();
+void accelerometerAlarmExitFunction();
+void accelerometerSetState(String newState);
+#line 59 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
 #define APP_NAME "beehiveMonitor"
 #define VERSION "Version 0.07"
 
