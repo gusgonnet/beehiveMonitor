@@ -62,6 +62,16 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 #include "Adafruit_ADXL343.h"
 #include "../lib/FiniteStateMachine/src/FiniteStateMachine.h"
 
+/*******************************************************************************
+********************************************************************************
+********************************************************************************
+USER CAN CHANGE THESE DEFINES BELOW
+********************************************************************************
+********************************************************************************
+*******************************************************************************/
+
+// this is used to identify the device when it publishes to the cloud
+String firmwareVersion();
 void setup();
 void loop();
 void loop();
@@ -84,36 +94,49 @@ void accelerometerAlarmEnterFunction();
 void accelerometerAlarmUpdateFunction();
 void accelerometerAlarmExitFunction();
 void accelerometerSetState(String newState);
-#line 59 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
-#define APP_NAME "beehiveMonitor"
-#define VERSION "Version 0.07"
+#line 68 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
+#define LOCATION "bees1"
 
-#define DEBUGGING
-
+// this determines if the device will be always on.
+// if commented out, the device will sleep and wake on movement or every NORMAL_SLEEP_CYCLE (4hs)
 #define ALWAYS_ONLINE
 
-// sleep if battery is low for some time (14400 seconds => 4 hours)
-// units: SECONDS
-#define LOW_BATTERY_SLEEP 14400
+// if not always online, the device will sleep for this time. It reports status to the cloud every time it wakes up.
+// units: MINUTES (example: 240 minutes => 4 hours)
+#define NORMAL_SLEEP_CYCLE 240
 
-// if not always online, sleep for this time
-// units: SECONDS
-#define NORMAL_SLEEP_CYCLE 600
+// sleep if battery is low for some time
+// units: MINUTES (example: 240 minutes => 4 hours)
+#define LOW_BATTERY_SLEEP 240
 
-// #define USE_SOLAR_PANEL
-#define USE_ADT7410
-#define USE_ADXL343
+// threshold in percentage
+#define CRITICAL_BATTERY 20
+
+// here you can configure what sensors you have connected
+// #define USE_ADT7410
+// #define USE_ADXL343
 #define USE_DS18B20
+
+// this defines the pin you connected the DS18B20 temperature sensor
 #define DS18B20_PIN D9
 
-// comment out if you want serial logging REMOVED
-#ifdef DEBUGGING
-SerialLogHandler logHandler(LOG_LEVEL_ALL);
-#endif
+// this defines if the temperature is preferred in fahrenheit
+// comment out for celsius
+#define TEMP_IN_FAHRENHEIT true
+
+// comment out if you are not debugging your code
+#define DEBUGGING
+
+/*******************************************************************************
+********************************************************************************
+********************************************************************************
+END -> USER CAN CHANGE THESE DEFINES ABOVE
+********************************************************************************
+********************************************************************************
+*******************************************************************************/
 
 /*******************************************************************************
  * changes in version 0.01:
-       * Particle Build link: https://go.particle.io/shared_apps/5a6b8e6d7e1a22f899001161
        * Initial version
  * changes in version 0.02:
        * removed legacy Serial logs, added newer SerialLogHandler
@@ -131,21 +154,47 @@ SerialLogHandler logHandler(LOG_LEVEL_ALL);
        * adding location: #define LOCATION "bees1"
  * changes in version 0.07:
        * removing Xenon, updating code to Device OS 2.0.1, updating libs to latest version
+ * changes in version 0.08:
+       * adding cloud variable with firmware version
+       * Removed reference to PMIC settings
+
 
 *******************************************************************************/
-
-#define LOCATION "bees1"
+String firmwareVersion()
+{
+  return "BeehiveMonitor - Version 0.08";
+}
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
 // source: https://docs.particle.io/reference/firmware/photon/#system-thread
 SYSTEM_THREAD(ENABLED);
 
-FuelGauge batteryMonitor;
-// threshold in percentage
-#define CRITICAL_BATTERY_BORON 20
+SerialLogHandler logHandler(LOG_LEVEL_INFO);
 
-float batteryReading = 0;
-bool useFahrenheit = true;
+#define MILLISECONDS_TO_SECONDS 1000
+#define MILLISECONDS_TO_MINUTES 60000
+#define SMALL_BUFFER 50
+
+#if PLATFORM_ID == PLATFORM_BORON
+FuelGauge batteryMonitor;
+#endif
+
+bool publishStatusFlag = false;
+bool movementDetected = false;
+
+// this variable is used to skip running code in always online devices
+// when they come back from sleep we do not want to run code
+// we want them to check the battery again just in case is still low
+bool sleepingDueToLowBatt = false;
+
+// This class allows to query the information about the latest System.sleep().
+// if wake up reason is pin or timer
+// https://docs.particle.io/reference/device-os/firmware/argon/#systemsleepresult-class
+SystemSleepResult result;
+
+#ifndef TEMP_IN_FAHRENHEIT
+#define TEMP_IN_FAHRENHEIT false
+#endif
 
 /*******************************************************************************
 vvvv    DS18B20 related    vvvv
@@ -240,6 +289,7 @@ int_config g_int_config_map = {0};
 vvvv    Finite State Machine related    vvvv
 *******************************************************************************/
 #ifdef USE_ADXL343
+
 // min amount of time to stay in alarm before coming back to normal in millis
 // this delays the sending out of alarm
 #define MOVEMENT_DETECTED_TIMEOUT 10000
@@ -258,27 +308,20 @@ String accelerometerState = STATE_OK;
 ^^^^    Finite State Machine related    ^^^^
 *******************************************************************************/
 
-#define LITTLE 50
-
-bool publishStatusFlag = false;
-bool movementDetected = false;
-
-// this variable is used to skip running code in always online devices
-// when they come back from sleep we do not want to run code
-// we want them to check the battery again just in case is still low
-bool justCameBackFromSleep = false;
-
-// This class allows to query the information about the latest System.sleep().
-// if wake up reason is pin or timer
-// https://docs.particle.io/reference/device-os/firmware/photon/#sleepresult-class
-SleepResult result = System.sleepResult();
-
 /*******************************************************************************
  * Function Name  : setup
  * Description    : this function runs once at system boot
  *******************************************************************************/
 void setup()
 {
+
+  // cloud variables (and calculated)
+  // Up to 20 cloud variables may be registered and
+  // each variable name is limited to a maximum of 12 characters (prior to 0.8.0), 64 characters (since 0.8.0).
+  // It is also possible to register a function to compute a cloud variable.
+  // https://docs.particle.io/reference/device-os/firmware/boron/#particle-variable-
+  Particle.variable("firmwareVersion", firmwareVersion);
+
   // cloud functions
   // Up to 15 cloud functions may be registered and each function name is limited to
   // a maximum of 12 characters (prior to 0.8.0), 64 characters (since 0.8.0).
@@ -293,22 +336,6 @@ void setup()
   Particle.variable("AccelerometerState", accelerometerState);
 
   pinMode(ADXL343_INPUT_PIN_INT1, INPUT_PULLDOWN);
-#endif
-
-#ifdef USE_SOLAR_PANEL
-  PMIC pmic; //Initalize the PMIC class so you can call the Power Management functions below.
-
-  // WARNING WARNING WARNING WARNING
-  // WARNING WARNING WARNING WARNING
-  // it seems this messes up the boron when no battery is connected
-  pmic.setInputVoltageLimit(5080); //  for 6V Solar Panels
-  // WARNING WARNING WARNING WARNING
-  // WARNING WARNING WARNING WARNING
-
-  pmic.setInputCurrentLimit(2000);         // 2000 mA, higher than req'd
-  pmic.setChargeVoltage(4208);             //  Set Li-Po charge termination voltage to 4.21V,  Monitor the Enclosure Temps
-  pmic.setChargeCurrent(0, 0, 1, 1, 1, 0); // 1408 mA [0+0+512mA+256mA+128mA+0] + 512 Offset
-  pmic.enableDPDM();
 #endif
 
 #ifdef USE_ADT7410
@@ -345,29 +372,33 @@ void setup()
 void loop() // loop for always online devices
 {
 
+#if PLATFORM_ID == PLATFORM_BORON
   // go to sleep if low battery
   checkLowBattery();
+#endif
 
-  // execute the code if not coming back from sleep
-  // if the code is just coming back from sleep, and the sleep
-  // was done due to low bat, we will potentially waste battery running this code
-  if (not justCameBackFromSleep)
+  // if the code is just coming back from sleep, and since the device was sleeping
+  // due to low bat, we will potentially waste battery running the rest of the loop() function
+  // hence, we return and this will call again loop()
+  if (sleepingDueToLowBatt)
   {
+    return;
+  }
 
 #ifdef USE_ADXL343
-    getAcceleration();
-    // printAccelInfo();
-    // accelDetected();
-    accelerometerStateMachine.update();
+  getAcceleration();
+  // printAccelInfo();
+  // accelDetected();
+  accelerometerStateMachine.update();
 #endif
 
-    // check if the forcePublishStatus cloud function was called
-    checkPublishStatusFlag();
+  // check if the forcePublishStatus cloud function was called
+  checkPublishStatusFlag();
 
 #ifdef DEBUGGING
-    delay(500);
+  publishStatus();
+  delay(1000);
 #endif
-  }
 }
 #endif
 
@@ -389,13 +420,13 @@ void loop() // loop for devices that sleep
   delay(8000);
 #endif
 
-  if (result.wokenUpByPin())
+  if (result.wakeupReason() == SystemSleepWakeupReason::BY_GPIO)
   {
     Log.info("Device was woken up by a pin");
     movementDetected = true;
   }
 
-  if (result.wokenUpByRtc())
+  if (result.wakeupReason() == SystemSleepWakeupReason::BY_RTC)
   {
     Log.info("Device was woken up by the timer");
     movementDetected = false;
@@ -406,8 +437,13 @@ void loop() // loop for devices that sleep
   // publish the info before going to sleep
   publishStatus();
 
-  System.sleep(ADXL343_INPUT_PIN_INT1, RISING, NORMAL_SLEEP_CYCLE);
-  result = System.sleepResult();
+  SystemSleepConfiguration config;
+  config.mode(SystemSleepMode::ULTRA_LOW_POWER)
+      .duration(NORMAL_SLEEP_CYCLE * MILLISECONDS_TO_MINUTES)
+      .gpio(ADXL343_INPUT_PIN_INT1, RISING)
+      .flag(SystemSleepFlag::WAIT_CLOUD);
+  result = System.sleep(config);
+  // SystemSleepResult result = System.sleep(config);
 }
 #endif
 
@@ -417,6 +453,8 @@ void loop() // loop for devices that sleep
  *******************************************************************************/
 void publishStatus()
 {
+  Log.info("---------------------");
+
 #ifdef USE_DS18B20
   getTempDS18B20();
 #endif
@@ -426,33 +464,38 @@ void publishStatus()
 #endif
 
 #define BUFFER 623
+
   char pubChar[BUFFER] = "";
   snprintf(pubChar, BUFFER, "Location: %s, Movement: %d", LOCATION, movementDetected);
 
-  char tempChar[LITTLE] = "";
-  snprintf(tempChar, LITTLE, ", SoC: %.2f%%", batteryMonitor.getSoC());
+  char tempChar[SMALL_BUFFER] = "";
+
+#if PLATFORM_ID == PLATFORM_BORON
+  float batterySoc = System.batteryCharge();
+  snprintf(tempChar, SMALL_BUFFER, ", SoC: %.2f%%", batterySoc);
   strcat(pubChar, tempChar);
+#endif
 
 #ifdef USE_ADT7410
-  if (useFahrenheit)
+  if (TEMP_IN_FAHRENHEIT)
   {
-    snprintf(tempChar, LITTLE, ", adt7410: %.2f", temp_ADT7410_fahrenheit);
+    snprintf(tempChar, SMALL_BUFFER, ", adt7410: %.2f", temp_ADT7410_fahrenheit);
   }
   else
   {
-    snprintf(tempChar, LITTLE, ", adt7410: %.2f", temp_ADT7410_celsius);
+    snprintf(tempChar, SMALL_BUFFER, ", adt7410: %.2f", temp_ADT7410_celsius);
   }
   strcat(pubChar, tempChar);
 #endif
 
 #ifdef USE_DS18B20
-  if (useFahrenheit)
+  if (TEMP_IN_FAHRENHEIT)
   {
-    snprintf(tempChar, LITTLE, ", ds18b20: %.2f", temp_DS18B20_fahrenheit);
+    snprintf(tempChar, SMALL_BUFFER, ", ds18b20: %.2f", temp_DS18B20_fahrenheit);
   }
   else
   {
-    snprintf(tempChar, LITTLE, ", ds18b20: %.2f", temp_DS18B20_celsius);
+    snprintf(tempChar, SMALL_BUFFER, ", ds18b20: %.2f", temp_DS18B20_celsius);
   }
   strcat(pubChar, tempChar);
 #endif
@@ -497,13 +540,24 @@ int forcePublishStatus(String dummy)
  *******************************************************************************/
 void checkLowBattery()
 {
-  justCameBackFromSleep = false;
+  sleepingDueToLowBatt = false;
+
+  float batterySoc = 100;
+#if PLATFORM_ID == PLATFORM_BORON
+  batterySoc = System.batteryCharge();
+#endif
 
   // send it to sleep if no more battery
-  if (batteryMonitor.getSoC() < CRITICAL_BATTERY_BORON)
+  if (batterySoc < CRITICAL_BATTERY)
   {
-    System.sleep(ADXL343_INPUT_PIN_INT1, RISING, LOW_BATTERY_SLEEP);
-    justCameBackFromSleep = true;
+    Log.info("Battery too low, going to sleep");
+
+    SystemSleepConfiguration config;
+    config.mode(SystemSleepMode::ULTRA_LOW_POWER)
+        .duration(LOW_BATTERY_SLEEP * MILLISECONDS_TO_MINUTES);
+    System.sleep(config);
+
+    sleepingDueToLowBatt = true;
   }
 }
 
@@ -516,14 +570,11 @@ void getTempDS18B20()
 {
   float _temp;
   int i = 0;
-  char tempChar[LITTLE] = "";
+  char tempChar[SMALL_BUFFER] = "";
 
   do
   {
     _temp = ds18b20.getTemperature();
-    // Log.info(i);
-    // Log.info(_temp);
-    // Log.info(ds18b20.crcCheck());
 
   } while (((_temp == NAN) || !ds18b20.crcCheck()) && MAXRETRY > i++);
 
@@ -538,10 +589,10 @@ void getTempDS18B20()
     Log.info("Invalid reading");
   }
 
-  snprintf(tempChar, LITTLE, "ds18b20 fahrenheit: %.2f", temp_DS18B20_fahrenheit);
+  snprintf(tempChar, SMALL_BUFFER, "ds18b20 fahrenheit: %.2f", temp_DS18B20_fahrenheit);
   Log.info(tempChar);
 
-  snprintf(tempChar, LITTLE, "ds18b20 celsius: %.2f", temp_DS18B20_celsius);
+  snprintf(tempChar, SMALL_BUFFER, "ds18b20 celsius: %.2f", temp_DS18B20_celsius);
   Log.info(tempChar);
 }
 #endif
@@ -557,11 +608,11 @@ void getTempADT7410()
   temp_ADT7410_celsius = tempsensor_ADT7410.readTempC();
   temp_ADT7410_fahrenheit = (temp_ADT7410_celsius * 1.8) + 32.0;
 
-  char tempChar[LITTLE] = "";
-  snprintf(tempChar, LITTLE, "adt7410 fahrenheit: %.2f", temp_ADT7410_fahrenheit);
+  char tempChar[SMALL_BUFFER] = "";
+  snprintf(tempChar, SMALL_BUFFER, "adt7410 fahrenheit: %.2f", temp_ADT7410_fahrenheit);
   Log.info(tempChar);
 
-  snprintf(tempChar, LITTLE, "adt7410 celsius: %.2f", temp_ADT7410_celsius);
+  snprintf(tempChar, SMALL_BUFFER, "adt7410 celsius: %.2f", temp_ADT7410_celsius);
   Log.info(tempChar);
 }
 #endif
@@ -573,14 +624,14 @@ void getTempADT7410()
 #ifdef USE_ADXL343
 void displaySensorDetails()
 {
-  char tempChar[LITTLE] = "";
+  char tempChar[SMALL_BUFFER] = "";
 
   sensor_t sensor;
   accel.getSensor(&sensor);
   Log.info("------------------------------------");
   Log.info("Sensor:       ");
   Log.info(sensor.name);
-  snprintf(tempChar, LITTLE, "Driver Ver: %li", sensor.version);
+  snprintf(tempChar, SMALL_BUFFER, "Driver Ver: %li", sensor.version);
   Log.info(tempChar);
   // Log.info("Unique ID:    ");
   // Log.info(sensor.sensor_id);
@@ -601,18 +652,17 @@ void getAcceleration()
 {
   sensors_event_t event;
   accel.getEvent(&event);
-  char tempChar[LITTLE] = "";
+  char tempChar[SMALL_BUFFER] = "";
 
   /* Display the results (acceleration is measured in m/s^2) */
   Log.info("------------------------------------");
-  snprintf(tempChar, LITTLE, "X: %.2f", event.acceleration.x);
+  snprintf(tempChar, SMALL_BUFFER, "X: %.2f", event.acceleration.x);
   Log.info(tempChar);
-  snprintf(tempChar, LITTLE, "y: %.2f", event.acceleration.y);
+  snprintf(tempChar, SMALL_BUFFER, "y: %.2f", event.acceleration.y);
   Log.info(tempChar);
-  snprintf(tempChar, LITTLE, "z: %.2f", event.acceleration.z);
+  snprintf(tempChar, SMALL_BUFFER, "z: %.2f", event.acceleration.z);
   Log.info(tempChar);
   Log.info("------------------------------------");
-  Log.info(VERSION);
 
   delay(500);
 }
@@ -630,26 +680,26 @@ void adxl343_int1_isr(void)
 
 void printAccelInfo()
 {
-  char tempChar[LITTLE] = "";
+  char tempChar[SMALL_BUFFER] = "";
 
   uint8_t format = accel.readRegister(ADXL343_REG_INT_ENABLE);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_ENABLE: %i", format);
+  snprintf(tempChar, SMALL_BUFFER, "read ADXL343_REG_INT_ENABLE: %i", format);
   Log.info(tempChar);
 
   format = accel.readRegister(ADXL343_REG_INT_MAP);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_MAP: %i", format);
+  snprintf(tempChar, SMALL_BUFFER, "read ADXL343_REG_INT_MAP: %i", format);
   Log.info(tempChar);
 
   format = accel.readRegister(ADXL343_REG_INT_SOURCE);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_INT_SOURCE: %i", format);
+  snprintf(tempChar, SMALL_BUFFER, "read ADXL343_REG_INT_SOURCE: %i", format);
   Log.info(tempChar);
 
   format = accel.readRegister(ADXL343_REG_THRESH_ACT);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_THRESH_ACT: %i", format);
+  snprintf(tempChar, SMALL_BUFFER, "read ADXL343_REG_THRESH_ACT: %i", format);
   Log.info(tempChar);
 
   format = accel.readRegister(ADXL343_REG_ACT_INACT_CTL);
-  snprintf(tempChar, LITTLE, "read ADXL343_REG_ACT_INACT_CTL: %i", format);
+  snprintf(tempChar, SMALL_BUFFER, "read ADXL343_REG_ACT_INACT_CTL: %i", format);
   Log.info(tempChar);
 }
 
@@ -763,6 +813,7 @@ void accelDetected()
 ********************************************************************************
 ********************************************************************************
 *******************************************************************************/
+#ifdef USE_ADXL343
 
 void accelerometerOkEnterFunction()
 {
@@ -832,3 +883,5 @@ void accelerometerSetState(String newState)
 #endif
   Log.info("Accelerometer fsm entering " + newState + " state");
 }
+
+#endif
