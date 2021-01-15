@@ -55,6 +55,7 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 #include "Adafruit_ADT7410.h"
 #include "Adafruit_ADXL343.h"
 #include "../lib/FiniteStateMachine/src/FiniteStateMachine.h"
+#include "../lib/Ubidots/src/Ubidots.h"
 
 /*******************************************************************************
 ********************************************************************************
@@ -94,6 +95,9 @@ USER CAN CHANGE THESE DEFINES BELOW
 // comment out for celsius
 #define TEMP_IN_FAHRENHEIT true
 
+// define if you want to debug ubidots connections
+// #define UBIDOTS_DEBUG
+
 // define only if you are debugging your code
 // WARNING
 // WARNING: it may change behaviour so do not deploy to the field a device in debug
@@ -131,12 +135,19 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
        * adding cloud variable with firmware version
        * Removed reference to PMIC settings
        * adding new sleep class in device os 2.x
+ * changes in version 0.09:
+       * adding ubidots
+          source: https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubidots-using-particle-webhooks
 
+
+
+How to create the Particle webhook to Ubidots:
+https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubidots-using-particle-webhooks
 
 *******************************************************************************/
 String firmwareVersion()
 {
-  return "BeehiveMonitor - Version 0.08";
+  return "BeehiveMonitor - Version 0.09";
 }
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -144,6 +155,11 @@ String firmwareVersion()
 SYSTEM_THREAD(ENABLED);
 
 SerialLogHandler logHandler(LOG_LEVEL_INFO);
+
+// if the user commented out the fahrenheit define above, define a celsius one
+#ifndef TEMP_IN_FAHRENHEIT
+#define TEMP_IN_FAHRENHEIT false
+#endif
 
 #define MILLISECONDS_TO_SECONDS 1000
 #define MILLISECONDS_TO_MINUTES 60000
@@ -166,9 +182,8 @@ bool sleepingDueToLowBatt = false;
 // https://docs.particle.io/reference/device-os/firmware/argon/#systemsleepresult-class
 SystemSleepResult result;
 
-#ifndef TEMP_IN_FAHRENHEIT
-#define TEMP_IN_FAHRENHEIT false
-#endif
+const char *WEBHOOK_NAME = "ubidotsbees";
+Ubidots ubidots("webhook", UBI_PARTICLE);
 
 /*******************************************************************************
 vvvv    DS18B20 related    vvvv
@@ -336,6 +351,11 @@ void setup()
 
   accelConfiguration();
 #endif
+
+#ifdef UBIDOTS_DEBUG
+  Serial.begin(115200);
+  ubidots.setDebug(true); // Uncomment this line for printing debug messages
+#endif
 }
 
 /*******************************************************************************
@@ -371,7 +391,27 @@ void loop() // loop for always online devices
 
 #ifdef DEBUGGING
   publishStatus();
-  delay(1000);
+
+  if (TEMP_IN_FAHRENHEIT)
+  {
+    ubidots.add("ds18b20", temp_DS18B20_fahrenheit);
+  }
+  else
+  {
+    ubidots.add("ds18b20", temp_DS18B20_celsius);
+  }
+
+  bool bufferSent = ubidots.send(WEBHOOK_NAME, PUBLIC); // Will use particle webhooks to send data
+  if (bufferSent)
+  {
+    Log.info("Ubidots values sent");
+  }
+  else
+  {
+    Log.info("Error: problems sending values to Ubidots");
+  }
+
+  delay(5000);
 #endif
 }
 #endif
