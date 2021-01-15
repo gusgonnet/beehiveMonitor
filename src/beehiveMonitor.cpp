@@ -125,6 +125,9 @@ void accelerometerSetState(String newState);
 // comment out for celsius
 #define TEMP_IN_FAHRENHEIT true
 
+// define if you want to debug ubidots connections
+// #define UBIDOTS_DEBUG
+
 // define only if you are debugging your code
 // WARNING
 // WARNING: it may change behaviour so do not deploy to the field a device in debug
@@ -379,8 +382,11 @@ void setup()
   accelConfiguration();
 #endif
 
+  ubidots.setDebug(false);
+#ifdef UBIDOTS_DEBUG
   Serial.begin(115200);
   ubidots.setDebug(true); // Uncomment this line for printing debug messages
+#endif
 }
 
 /*******************************************************************************
@@ -430,7 +436,8 @@ void loop() // loop for always online devices
   if (bufferSent)
   {
     Log.info("Ubidots values sent");
-  } else
+  }
+  else
   {
     Log.info("Error: problems sending values to Ubidots");
   }
