@@ -22,6 +22,11 @@ Developed and maintained by Jose Garcia for Ubidots Inc
 */
 
 #include "UbiParticle.h"
+#include "../../../lib/PublishQueueAsyncRK/src/PublishQueueAsyncRK.h"
+
+retained uint8_t publishQueueRetainedBuffer[2048];
+PublishQueueAsync publishQueue(publishQueueRetainedBuffer, sizeof(publishQueueRetainedBuffer));
+
 
 /**************************************************************************
  * Overloaded constructors
@@ -48,7 +53,10 @@ UbiParticle::~UbiParticle() {
  */
 
 bool UbiParticle::sendData(const char* device_label, const char* device_name, char* payload, UbiFlags* flags) {
-  return Particle.publish(device_label, payload, flags->particle_flag);
+  Log.info("Ubidots: about to send data");
+  return publishQueue.publish(device_label, payload, 60, PRIVATE, WITH_ACK);
+  // return 0;
+  // return Particle.publish(device_label, payload, flags->particle_flag);
 }
 
 float UbiParticle::get(const char* device_label, const char* variable_label) {

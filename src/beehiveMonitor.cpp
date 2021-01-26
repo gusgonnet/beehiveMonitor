@@ -62,6 +62,7 @@ to fire an INT pin, which you could use to wakeup your device, for example, or p
 #include "Adafruit_ADXL343.h"
 #include "../lib/FiniteStateMachine/src/FiniteStateMachine.h"
 #include "../lib/Ubidots/src/Ubidots.h"
+#include "../lib/PublishQueueAsyncRK/src/PublishQueueAsyncRK.h"
 
 /*******************************************************************************
 ********************************************************************************
@@ -76,6 +77,8 @@ String firmwareVersion();
 void setup();
 void loop();
 void loop();
+void sendDataToUbidots(bool scheduled);
+void readSensors();
 void publishStatus();
 void checkPublishStatusFlag();
 int forcePublishStatus(String dummy);
@@ -95,16 +98,21 @@ void accelerometerAlarmEnterFunction();
 void accelerometerAlarmUpdateFunction();
 void accelerometerAlarmExitFunction();
 void accelerometerSetState(String newState);
-#line 69 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
+#line 70 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
 #define BEEHIVE_LOCATION "bees1"
 
 // this determines if the device will always be on.
-// if commented out, the device will sleep and wake on movement or every NORMAL_SLEEP_CYCLE (4hs)
+// if commented out, the device will sleep and wake either:
+//  - on movement detected at any time
+//  - every NORMAL_SLEEP_CYCLE (4hs) to report periodically to the cloud
 #define ALWAYS_ONLINE
 
 // if not always online, the device will sleep for this time. It reports status to the cloud every time it wakes up.
 // units: MINUTES (example: 240 minutes => 4 hours)
 #define NORMAL_SLEEP_CYCLE 240
+
+// publish to ubidots every number of minutes
+#define PUBLISH_TO_UBIDOTS 240
 
 // sleep if battery is low for some time
 // units: MINUTES (example: 240 minutes => 4 hours)
@@ -114,9 +122,9 @@ void accelerometerSetState(String newState);
 #define CRITICAL_BATTERY 20
 
 // here you can configure what sensors you have connected
-// #define USE_ADT7410
-// #define USE_ADXL343
-#define USE_DS18B20
+#define USE_ADT7410 // temp sensor
+#define USE_ADXL343 // accel sensor
+#define USE_DS18B20 // temp sensor
 
 // this defines the pin you connected the DS18B20 temperature sensor
 #define DS18B20_PIN D9
@@ -130,7 +138,8 @@ void accelerometerSetState(String newState);
 
 // define only if you are debugging your code
 // WARNING
-// WARNING: it may change behaviour so do not deploy to the field a device in debug
+// WARNING: it may change behaviour (timeouts, sleep periods)
+//          so do not deploy in the field a device in debug
 // WARNING
 #define DEBUGGING
 
@@ -168,7 +177,10 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
  * changes in version 0.09:
        * adding ubidots
           source: https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubidots-using-particle-webhooks
-
+ * changes in version 0.10:
+       * adding sendDataToUbidots()
+       * renamed cloud function forcePublishStatus to updateUbidotsRightAway
+       * adding PublishQueueAsyncRK to send alarms in a more reliable way
 
 
 How to create the Particle webhook to Ubidots:
@@ -177,12 +189,15 @@ https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubid
 *******************************************************************************/
 String firmwareVersion()
 {
-  return "BeehiveMonitor - Version 0.09";
+  return "BeehiveMonitor - Version 0.10";
 }
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
 // source: https://docs.particle.io/reference/firmware/photon/#system-thread
 SYSTEM_THREAD(ENABLED);
+
+// retained uint8_t publishQueueRetainedBuffer[2048];
+// PublishQueueAsync publishQueue(publishQueueRetainedBuffer, sizeof(publishQueueRetainedBuffer));
 
 SerialLogHandler logHandler(LOG_LEVEL_INFO);
 
@@ -214,6 +229,12 @@ SystemSleepResult result;
 
 const char *WEBHOOK_NAME = "ubidotsbees";
 Ubidots ubidots("webhook", UBI_PARTICLE);
+
+#define RIGHT_NOW false
+#define SCHEDULED true
+
+// this initial value ensures the device updates ubidots right after a reset
+unsigned long ubidotsTime = PUBLISH_TO_UBIDOTS * MILLISECONDS_TO_MINUTES * 2; 
 
 /*******************************************************************************
 vvvv    DS18B20 related    vvvv
@@ -334,18 +355,18 @@ String accelerometerState = STATE_OK;
 void setup()
 {
 
+  // cloud functions
+  // Up to 15 cloud functions may be registered and each function name is limited to
+  // a maximum of 12 characters (prior to 0.8.0), 64 characters (since 0.8.0).
+  // https://docs.particle.io/reference/device-os/firmware/boron/#particle-function-
+  Particle.function("updateUbidotsRightAway", forcePublishStatus);
+
   // cloud variables (and calculated)
   // Up to 20 cloud variables may be registered and
   // each variable name is limited to a maximum of 12 characters (prior to 0.8.0), 64 characters (since 0.8.0).
   // It is also possible to register a function to compute a cloud variable.
   // https://docs.particle.io/reference/device-os/firmware/boron/#particle-variable-
   Particle.variable("firmwareVersion", firmwareVersion);
-
-  // cloud functions
-  // Up to 15 cloud functions may be registered and each function name is limited to
-  // a maximum of 12 characters (prior to 0.8.0), 64 characters (since 0.8.0).
-  // https://docs.particle.io/reference/device-os/firmware/boron/#particle-function-
-  Particle.function("forcePublishStatus", forcePublishStatus);
 
   // cloud variables
   // Up to 20 cloud variables may be registered and each variable name is limited to
@@ -384,8 +405,7 @@ void setup()
 
   ubidots.setDebug(false);
 #ifdef UBIDOTS_DEBUG
-  Serial.begin(115200);
-  ubidots.setDebug(true); // Uncomment this line for printing debug messages
+  ubidots.setDebug(true);
 #endif
 }
 
@@ -398,50 +418,32 @@ void loop() // loop for always online devices
 {
 
 #if PLATFORM_ID == PLATFORM_BORON
+
   // go to sleep if low battery
   checkLowBattery();
-#endif
 
-  // if the code is just coming back from sleep, and since the device was sleeping
-  // due to low bat, we will potentially waste battery running the rest of the loop() function
-  // hence, we return and this will call again loop()
+  // if the device is just waking up from a low bat situation
+  //     => we return since this will call again loop() and check the battery again
+  // this will avoid wasting battery by running the rest of the loop() function
   if (sleepingDueToLowBatt)
   {
     return;
   }
+#endif
+
+  readSensors();
 
 #ifdef USE_ADXL343
-  getAcceleration();
-  // printAccelInfo();
-  // accelDetected();
   accelerometerStateMachine.update();
 #endif
 
   // check if the forcePublishStatus cloud function was called
   checkPublishStatusFlag();
 
+  sendDataToUbidots(SCHEDULED);
+
 #ifdef DEBUGGING
   publishStatus();
-
-  if (TEMP_IN_FAHRENHEIT)
-  {
-    ubidots.add("ds18b20", temp_DS18B20_fahrenheit);
-  }
-  else
-  {
-    ubidots.add("ds18b20", temp_DS18B20_celsius);
-  }
-
-  bool bufferSent = ubidots.send(WEBHOOK_NAME, PUBLIC); // Will use particle webhooks to send data
-  if (bufferSent)
-  {
-    Log.info("Ubidots values sent");
-  }
-  else
-  {
-    Log.info("Error: problems sending values to Ubidots");
-  }
-
   delay(5000);
 #endif
 }
@@ -454,8 +456,20 @@ void loop() // loop for always online devices
 #ifndef ALWAYS_ONLINE
 void loop() // loop for devices that sleep
 {
+
+#if PLATFORM_ID == PLATFORM_BORON
+
   // go to sleep if low battery
   checkLowBattery();
+
+  // if the device is just waking up from a low bat situation
+  //     => we return since this will call again loop() and check the battery again
+  // this will avoid wasting battery by running the rest of the loop() function
+  if (sleepingDueToLowBatt)
+  {
+    return;
+  }
+#endif
 
 #ifdef USE_ADXL343
 
@@ -493,12 +507,71 @@ void loop() // loop for devices that sleep
 #endif
 
 /*******************************************************************************
- * Function Name  : publishStatus
- * Description    : publish status message
+ * Function Name  : sendDataToUbidots
+ * Description    : send the data to ubidots via webhook
  *******************************************************************************/
-void publishStatus()
+void sendDataToUbidots(bool scheduled)
 {
-  Log.info("------------------------------------------");
+
+  // if scheduled is true, we send to ubidots acording to schedule
+  // (default 240 minutes == 4 hours)
+  // if false, we send to ubidots right away => in case of alarm, for instance
+  if (scheduled)
+  {
+    // source: https://github.com/kennethlimcp/particle-examples/blob/master/vbatt-argon-boron/vbatt-argon-boron.ino
+    if (millis() - ubidotsTime < (PUBLISH_TO_UBIDOTS * MILLISECONDS_TO_MINUTES))
+    {
+      return;
+    }
+  }
+
+  ubidotsTime = millis();
+
+  // add temperatures from both DS18B20 and adt7410 sensors
+  if (TEMP_IN_FAHRENHEIT)
+  {
+    // if the ds18b20 is not connected we get NAN
+    // if we try to send that value, ubidots complains and rejects the message
+    if (!isnan(temp_DS18B20_fahrenheit))
+    {
+      ubidots.add("temp_ds18b20", temp_DS18B20_fahrenheit);
+    }
+
+    ubidots.add("temp_adt7410", temp_ADT7410_fahrenheit);
+  }
+  else
+  {
+
+    // if the ds18b20 is not connected we get NAN
+    // if we try to send that value, ubidots complains and rejects the message
+    if (!isnan(temp_DS18B20_celsius))
+    {
+      ubidots.add("temp_ds18b20", temp_DS18B20_celsius);
+    }
+
+    ubidots.add("temp_adt7410", temp_ADT7410_celsius);
+  }
+
+  // add accel info
+  ubidots.add("movement", movementDetected);
+
+  bool bufferSent = ubidots.send(WEBHOOK_NAME, PUBLIC); // Will use particle webhooks to send data
+  if (bufferSent)
+  {
+    Log.info("Ubidots values sent");
+  }
+  else
+  {
+    Log.info("Error: problems sending values to Ubidots");
+  }
+}
+
+/*******************************************************************************
+ * Function Name  : readSensors
+ * Description    : read temperature sensors
+ *******************************************************************************/
+void readSensors()
+{
 
 #ifdef USE_DS18B20
   getTempDS18B20();
@@ -507,6 +580,21 @@ void publishStatus()
 #ifdef USE_ADT7410
   getTempADT7410();
 #endif
+
+#ifdef USE_ADXL343
+  getAcceleration();
+  // printAccelInfo();
+  // accelDetected();
+#endif
+}
+
+/*******************************************************************************
+ * Function Name  : publishStatus
+ * Description    : publish status message to serial and particle cloud
+ *******************************************************************************/
+void publishStatus()
+{
+  Log.info("------------------------------------------");
 
 #define BUFFER 623
 
@@ -548,15 +636,13 @@ void publishStatus()
   Log.info(pubChar);
   Particle.publish("STATUS", pubChar, PRIVATE | WITH_ACK);
 
-#ifndef ALWAYS_ONLINE
-  // leave time to publish to go out
-  delay(4000);
-#endif
 }
 
 /*******************************************************************************
  * Function Name  : checkPublishStatusFlag
  * Description    : call publish status message if the publishStatus() cloud function was called
+ *                  it sends info to the particle cloud and to Ubidots on demand
+ *                  on demand: means the user called the forcePublishStatus() function
  *******************************************************************************/
 void checkPublishStatusFlag()
 {
@@ -564,6 +650,7 @@ void checkPublishStatusFlag()
   {
     publishStatusFlag = false;
     publishStatus();
+    sendDataToUbidots(RIGHT_NOW);
   }
 }
 
@@ -598,9 +685,12 @@ void checkLowBattery()
     Log.info("Battery too low, going to sleep");
 
     SystemSleepConfiguration config;
+
     config.mode(SystemSleepMode::ULTRA_LOW_POWER)
-        .duration(LOW_BATTERY_SLEEP * MILLISECONDS_TO_MINUTES);
-    System.sleep(config);
+        .duration(LOW_BATTERY_SLEEP * MILLISECONDS_TO_MINUTES)
+        .gpio(ADXL343_INPUT_PIN_INT1, RISING)
+        .flag(SystemSleepFlag::WAIT_CLOUD);
+    result = System.sleep(config);
 
     sleepingDueToLowBatt = true;
   }
@@ -892,6 +982,7 @@ void accelerometerAlarmEnterFunction()
 #ifdef DEBUGGING
   Particle.publish("ALARM", "Accelerometer detected movement", PRIVATE | WITH_ACK);
 #endif
+  sendDataToUbidots(RIGHT_NOW);
   accelerometerSetState(STATE_ALARM);
 }
 void accelerometerAlarmUpdateFunction()
