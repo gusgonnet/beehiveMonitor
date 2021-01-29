@@ -108,7 +108,7 @@ void accelerometerSetState(String newState);
 // if commented out, the device will sleep and wake either:
 //  - on movement detected at any time
 //  - every NORMAL_SLEEP_CYCLE (4hs) to report periodically to the cloud
-#define ALWAYS_ONLINE
+// #define ALWAYS_ONLINE
 
 // if not always online, the device will sleep for this time. It reports status to the cloud every time it wakes up.
 // units: MINUTES (example: 240 minutes => 4 hours)
@@ -198,6 +198,8 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
        * adding JsonParserGeneratorRK
        * removing ubidots library
        * adding WAIT_FOR_PARTICLE_CONNECT
+ * changes in version 0.12:
+       * in a low bat situation, the sleep does not wait for any cloud message to be sent (no using WAIT_CLOUD anymore)
 
 
 How to create the Particle webhook to Ubidots:
@@ -206,7 +208,7 @@ https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubid
 *******************************************************************************/
 String firmwareVersion()
 {
-  return "BeehiveMonitor - Version 0.11";
+  return "BeehiveMonitor - Version 0.12";
 }
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -420,7 +422,6 @@ void setup()
   if (!tempsensor_ADT7410.begin())
   {
     Log.error("Ooops, no ADT7410 temperature sensor detected. Please check your wiring!");
-    // TODO: not sure if this while loop works fine - TO BE TESTED!
     while (1)
       ;
   }
@@ -430,7 +431,6 @@ void setup()
   if (!accel.begin())
   {
     Log.error("Ooops, no ADXL343 accelerometer detected. Please check your wiring!");
-    // TODO: not sure if this while loop works fine - TO BE TESTED!
     while (1)
       ;
   }
@@ -652,6 +652,7 @@ void sendDataToUbidots(bool scheduled)
     batterySoc = System.batteryCharge();
     jw.insertKeyValue("SoC", batterySoc);
 
+    // https://docs.particle.io/reference/device-os/firmware/boron/#batterystate-
     jw.insertKeyValue("State", System.batteryState());
 
 #endif
@@ -838,8 +839,8 @@ void checkLowBattery()
 
     config.mode(SystemSleepMode::ULTRA_LOW_POWER)
         .duration(LOW_BATTERY_SLEEP * MILLISECONDS_TO_MINUTES)
-        .gpio(ADXL343_INPUT_PIN_INT1, RISING)
-        .flag(SystemSleepFlag::WAIT_CLOUD);
+        .gpio(ADXL343_INPUT_PIN_INT1, RISING);
+    // .flag(SystemSleepFlag::WAIT_CLOUD); -> we do not need to send any messages if the battery is low
     result = System.sleep(config);
 
     sleepingDueToLowBatt = true;
