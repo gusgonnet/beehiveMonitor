@@ -129,7 +129,7 @@ void accelerometerSetState(String newState);
 // threshold in percentage
 #define CRITICAL_BATTERY 20
 
-// how often to read the sensors
+// how often to read the sensors (always online devices only)
 #define READ_SENSORS_SECONDS 5
 
 // here you can configure what sensors you have connected
@@ -137,7 +137,7 @@ void accelerometerSetState(String newState);
 #define USE_ADXL343 // accel sensor
 #define USE_DS18B20 // temp sensor
 
-// this defines the pin you connected the DS18B20 temperature sensor
+// this defines the pin where you connected the DS18B20 temperature sensor
 #define DS18B20_PIN D9
 
 // this defines if the temperature is preferred in fahrenheit
@@ -153,7 +153,7 @@ void accelerometerSetState(String newState);
 // WARNING: it may change behaviour (timeouts, sleep periods)
 //          so do not deploy in the field a device in debug
 // WARNING
-#define DEBUGGING
+// #define DEBUGGING
 
 /*******************************************************************************
 ********************************************************************************
