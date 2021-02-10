@@ -200,7 +200,10 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
        * adding WAIT_FOR_PARTICLE_CONNECT
  * changes in version 0.12:
        * in a low bat situation, the sleep does not wait for any cloud message to be sent (no using WAIT_CLOUD anymore)
-
+ * changes in version 0.13: (not yet tested)
+       * changed the visual indications:
+         * one blink: going to sleep
+         * three blinks: about to send data to ubidots
 
 How to create the Particle webhook to Ubidots:
 https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubidots-using-particle-webhooks
@@ -208,7 +211,7 @@ https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubid
 *******************************************************************************/
 String firmwareVersion()
 {
-  return "BeehiveMonitor - Version 0.12";
+  return "BeehiveMonitor - Version 0.13";
 }
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -600,6 +603,14 @@ void sendDataToUbidots(bool scheduled)
   digitalWrite(D7, HIGH);
   delay(250);
   digitalWrite(D7, LOW);
+  delay(250);
+  digitalWrite(D7, HIGH);
+  delay(250);
+  digitalWrite(D7, LOW);
+  delay(250);
+  digitalWrite(D7, HIGH);
+  delay(250);
+  digitalWrite(D7, LOW);
 #endif
 
   ubidotsTime = millis();
@@ -822,14 +833,6 @@ void checkLowBattery()
 
 // visual indication that the device will go to sleep
 #ifdef DEBUGGING
-    digitalWrite(D7, HIGH);
-    delay(250);
-    digitalWrite(D7, LOW);
-    delay(250);
-    digitalWrite(D7, HIGH);
-    delay(250);
-    digitalWrite(D7, LOW);
-    delay(250);
     digitalWrite(D7, HIGH);
     delay(250);
     digitalWrite(D7, LOW);
