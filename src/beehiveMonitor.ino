@@ -153,7 +153,7 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
  * changes in version 0.06:
        * adding location: #define BEEHIVE_LOCATION "bees1"
  * changes in version 0.07:
-       * removing Xenon, updating code to Device OS 2.0.1, updating libs to latest version
+       * removing Xenon, updating code to Device OS 2.0.1, updating libs to latest version 
  * changes in version 0.08:
        * adding cloud variable with firmware version
        * Removed reference to PMIC settings
