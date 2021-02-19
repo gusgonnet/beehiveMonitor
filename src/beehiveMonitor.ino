@@ -53,6 +53,8 @@ Rather that constantly polling an accelerometer to see if movement is detected, 
 when there is (one or both of) activity or inactivity on the device, with user-adjustable thresholds. This can be configure 
 to fire an INT pin, which you could use to wakeup your device, for example, or put it to sleep after a certain amount of inactivity.
 
+datasheet:
+https://www.analog.com/media/en/technical-documentation/data-sheets/ADXL345.pdf
 
 *******************************************************************************/
 
@@ -170,10 +172,29 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
        * adding WAIT_FOR_PARTICLE_CONNECT
  * changes in version 0.12:
        * in a low bat situation, the sleep does not wait for any cloud message to be sent (no using WAIT_CLOUD anymore)
- * changes in version 0.13: (not yet tested)
+ * changes in version 0.13:
        * changed the visual indications:
          * one blink: going to sleep
          * three blinks: about to send data to ubidots
+ * changes in version 0.14:
+         * adding a write to 0x2D—POWER_CTL to try to eliminate this weird situation that omgbees is reporting that his 
+           device only wakes up once from sleep when tapped/hit. So seems like activity detection is working only once.
+            // Register 0x2D—POWER_CTL (Read/Write)
+            // D7  D6  D5    D4          D3        D2     D1 D0
+            // 0   0   Link  AUTO_SLEEP  Measure   Sleep  Wakeup
+            // value:
+            // 0   0   0     0           0(then 1) 0      0  0
+            // 
+            // so we need to set to one value then another value, here's what the datasheet says:
+            // When clearing the AUTO_SLEEP bit, it is recommended that the
+            // part be placed into standby mode and then set back to measurement mode with a subsequent write. This is done to ensure that
+            // the device is properly biased if sleep mode is manually disabled;
+            // otherwise, the first few samples of data after the AUTO_SLEEP
+            // bit is cleared may have additional noise, especially if the device
+            // was asleep when the bit was cleared.
+            accel.writeRegister(ADXL343_REG_POWER_CTL, 0x00);
+          
+            accel.writeRegister(ADXL343_REG_POWER_CTL, 0x08);
 
 How to create the Particle webhook to Ubidots:
 https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubidots-using-particle-webhooks
@@ -181,7 +202,7 @@ https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubid
 *******************************************************************************/
 String firmwareVersion()
 {
-  return "BeehiveMonitor - Version 0.13";
+  return "BeehiveMonitor - Version 0.14";
 }
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -1051,6 +1072,23 @@ void accelConfiguration(void)
   // in my understanding, this is the SENSITIVITY of the ACTIVITY DETECTION
   // 0x20: if I tap on the table the board is, the device wakes up
   accel.writeRegister(ADXL343_REG_THRESH_ACT, ADXL343_SENSITIVITY);
+
+  // Register 0x2D—POWER_CTL (Read/Write)
+  // D7  D6  D5    D4          D3        D2     D1 D0
+  // 0   0   Link  AUTO_SLEEP  Measure   Sleep  Wakeup
+  // value:
+  // 0   0   0     0           0(then 1) 0      0  0
+  // 
+  // so we need to set to one value then another value, here's what the datasheet says:
+  // When clearing the AUTO_SLEEP bit, it is recommended that the
+  // part be placed into standby mode and then set back to measurement mode with a subsequent write. This is done to ensure that
+  // the device is properly biased if sleep mode is manually disabled;
+  // otherwise, the first few samples of data after the AUTO_SLEEP
+  // bit is cleared may have additional noise, especially if the device
+  // was asleep when the bit was cleared.
+  accel.writeRegister(ADXL343_REG_POWER_CTL, 0x00);
+
+  accel.writeRegister(ADXL343_REG_POWER_CTL, 0x08);
 }
 
 void accelDetected()

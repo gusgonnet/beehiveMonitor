@@ -9,6 +9,11 @@
  * Description: monitor the state of beehives
  * Author: Gustavo Gonnet gusgonnet@gmail.com
  * Date: May 26th 2019
+
+ * Visual indications with onboard LED:
+    * one blink: going to sleep
+    * three blinks: about to send data to ubidots
+ 
  */
 
 /*******************************************************************************
@@ -54,6 +59,8 @@ Rather that constantly polling an accelerometer to see if movement is detected, 
 when there is (one or both of) activity or inactivity on the device, with user-adjustable thresholds. This can be configure 
 to fire an INT pin, which you could use to wakeup your device, for example, or put it to sleep after a certain amount of inactivity.
 
+datasheet:
+https://www.analog.com/media/en/technical-documentation/data-sheets/ADXL345.pdf
 
 *******************************************************************************/
 
@@ -101,7 +108,7 @@ void accelerometerAlarmEnterFunction();
 void accelerometerAlarmUpdateFunction();
 void accelerometerAlarmExitFunction();
 void accelerometerSetState(String newState);
-#line 70 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
+#line 77 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
 #define BEEHIVE_LOCATION "bees1"
 
 // this determines if the device will always be on.
@@ -1081,6 +1088,23 @@ void accelConfiguration(void)
   // in my understanding, this is the SENSITIVITY of the ACTIVITY DETECTION
   // 0x20: if I tap on the table the board is, the device wakes up
   accel.writeRegister(ADXL343_REG_THRESH_ACT, ADXL343_SENSITIVITY);
+
+  // Register 0x2D—POWER_CTL (Read/Write)
+  // D7  D6  D5    D4          D3        D2     D1 D0
+  // 0   0   Link  AUTO_SLEEP  Measure   Sleep  Wakeup
+  // value:
+  // 0   0   0     0           0(then 1) 0      0  0
+  // 
+  // so we need to set to one value then another value, here's what the datasheet says:
+  // When clearing the AUTO_SLEEP bit, it is recommended that the
+  // part be placed into standby mode and then set back to measurement mode with a subsequent write. This is done to ensure that
+  // the device is properly biased if sleep mode is manually disabled;
+  // otherwise, the first few samples of data after the AUTO_SLEEP
+  // bit is cleared may have additional noise, especially if the device
+  // was asleep when the bit was cleared.
+  accel.writeRegister(ADXL343_REG_POWER_CTL, 0x00);
+
+  accel.writeRegister(ADXL343_REG_POWER_CTL, 0x08);
 }
 
 void accelDetected()
