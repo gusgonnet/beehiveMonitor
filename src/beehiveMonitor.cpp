@@ -13,7 +13,6 @@
  * Visual indications with onboard LED:
     * one blink: going to sleep
     * three blinks: about to send data to ubidots
- 
  */
 
 /*******************************************************************************
@@ -56,12 +55,15 @@ INT1 and INT2: There are two optional interrupt output pins on this sensor, whic
 
 Activity/Inactivity Detection
 Rather that constantly polling an accelerometer to see if movement is detected, you can configure the ADXL343 to let you know 
-when there is (one or both of) activity or inactivity on the device, with user-adjustable thresholds. This can be configure 
+when there is (one or both of) activity or inactivity on the device, with user-adjustable thresholds. This can be configured 
 to fire an INT pin, which you could use to wakeup your device, for example, or put it to sleep after a certain amount of inactivity.
 
 datasheet:
 https://www.analog.com/media/en/technical-documentation/data-sheets/ADXL345.pdf
 
+Feather:
+https://www.adafruit.com/product/4147
+https://learn.adafruit.com/iot-motion-and-temperature-sensor-with-adxl343-adt7410-sensor-featherwing-and-adafruit-io
 *******************************************************************************/
 
 #include "AnalogSmooth.h"
@@ -97,7 +99,6 @@ void getAcceleration();
 void adxl343_int1_isr(void);
 void printAccelInfo();
 void accelConfiguration(void);
-void accelDetected();
 void accelerometerInitEnterFunction();
 void accelerometerInitUpdateFunction();
 void accelerometerInitExitFunction();
@@ -108,14 +109,14 @@ void accelerometerAlarmEnterFunction();
 void accelerometerAlarmUpdateFunction();
 void accelerometerAlarmExitFunction();
 void accelerometerSetState(String newState);
-#line 77 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
+#line 79 "/home/ceajog/0trabajo/omgbees/beehiveMonitor/src/beehiveMonitor.ino"
 #define BEEHIVE_LOCATION "bees1"
 
 // this determines if the device will always be on.
 // if commented out, the device will sleep and wake either:
 //  - on movement detected at any time
 //  - every NORMAL_SLEEP_CYCLE (4hs) to report periodically to the cloud
-// #define ALWAYS_ONLINE
+#define ALWAYS_ONLINE
 
 // if not always online, the device will sleep for this time. It reports status to the cloud every time it wakes up.
 // units: MINUTES (example: 240 minutes => 4 hours)
@@ -140,7 +141,7 @@ void accelerometerSetState(String newState);
 #define READ_SENSORS_SECONDS 5
 
 // here you can configure what sensors you have connected
-#define USE_ADT7410 // temp sensor
+// #define USE_ADT7410 // temp sensor
 #define USE_ADXL343 // accel sensor
 #define USE_DS18B20 // temp sensor
 
@@ -188,7 +189,7 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
  * changes in version 0.06:
        * adding location: #define BEEHIVE_LOCATION "bees1"
  * changes in version 0.07:
-       * removing Xenon, updating code to Device OS 2.0.1, updating libs to latest version
+       * removing Xenon, updating code to Device OS 2.0.1, updating libs to latest version 
  * changes in version 0.08:
        * adding cloud variable with firmware version
        * Removed reference to PMIC settings
@@ -207,10 +208,41 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
        * adding WAIT_FOR_PARTICLE_CONNECT
  * changes in version 0.12:
        * in a low bat situation, the sleep does not wait for any cloud message to be sent (no using WAIT_CLOUD anymore)
- * changes in version 0.13: (not yet tested)
+ * changes in version 0.13:
        * changed the visual indications:
          * one blink: going to sleep
          * three blinks: about to send data to ubidots
+ * changes in version 0.14:
+         * adding a write to 0x2D—POWER_CTL to try to eliminate this weird situation that omgbees is reporting that his 
+           device only wakes up once from sleep when tapped/hit. So seems like activity detection is working only once.
+            // Register 0x2D—POWER_CTL (Read/Write)
+            // D7  D6  D5    D4          D3        D2     D1 D0
+            // 0   0   Link  AUTO_SLEEP  Measure   Sleep  Wakeup
+            // value:
+            // 0   0   0     0           0(then 1) 0      0  0
+            // 
+            // so we need to set to one value then another value, here's what the datasheet says:
+            // When clearing the AUTO_SLEEP bit, it is recommended that the
+            // part be placed into standby mode and then set back to measurement mode with a subsequent write. This is done to ensure that
+            // the device is properly biased if sleep mode is manually disabled;
+            // otherwise, the first few samples of data after the AUTO_SLEEP
+            // bit is cleared may have additional noise, especially if the device
+            // was asleep when the bit was cleared.
+            accel.writeRegister(ADXL343_REG_POWER_CTL, 0x00);
+          
+            accel.writeRegister(ADXL343_REG_POWER_CTL, 0x08);
+
+ * changes in version 0.15:
+         * fixing one time only movement detection by reading register from accelerometer according to datasheet
+             The interrupt functions are latched and cleared by eitherreading the
+             data registers (Address 0x32 to Address 0x37) until the interrupt
+             condition is no longer valid for the data-related interrupts or by
+             reading the INT_SOURCE register (Address 0x30) for the
+             remaining interrupts. This section describes the interrupts
+             that can be set in the INT_ENABLE register and monitored
+             in the INT_SOURCE register.
+
+
 
 How to create the Particle webhook to Ubidots:
 https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubidots-using-particle-webhooks
@@ -218,7 +250,7 @@ https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubid
 *******************************************************************************/
 String firmwareVersion()
 {
-  return "BeehiveMonitor - Version 0.13";
+  return "BeehiveMonitor - Version 0.15";
 }
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -355,7 +387,7 @@ struct adxl_int_stats
 struct adxl_int_stats g_int_stats = {0};
 
 /** Global counter to track the numbers of unused interrupts fired. */
-uint32_t g_ints_fired = 0;
+// uint32_t g_ints_fired = 0;
 
 /** Global variable to determine which interrupt(s) are enabled on the ADXL343. */
 int_config g_int_config_enabled = {0};
@@ -431,18 +463,18 @@ void setup()
   // address with tempsensor.begin(0x49) for example
   if (!tempsensor_ADT7410.begin())
   {
-    Log.error("Ooops, no ADT7410 temperature sensor detected. Please check your wiring!");
     while (1)
-      ;
+      Log.error("Ooops, no ADT7410 temperature sensor detected. Please check your wiring!");
+    ;
   }
 #endif
 
 #ifdef USE_ADXL343
   if (!accel.begin())
   {
-    Log.error("Ooops, no ADXL343 accelerometer detected. Please check your wiring!");
     while (1)
-      ;
+      Log.error("Ooops, no ADXL343 accelerometer detected. Please check your wiring!");
+    ;
   }
 
   accelConfiguration();
@@ -552,6 +584,17 @@ void loop() // loop for devices that sleep
     movementDetected = false;
   }
 
+  // READ register 0x30 to clear int flag
+  // from datasheet:
+  // The interrupt functions are latched and cleared by eitherreading the
+  // data registers (Address 0x32 to Address 0x37) until the interrupt
+  // condition is no longer valid for the data-related interrupts or by
+  // reading the INT_SOURCE register (Address 0x30) for the
+  // remaining interrupts. This section describes the interrupts
+  // that can be set in the INT_ENABLE register and monitored
+  // in the INT_SOURCE register.
+  Log.info("Clearing int flag");
+  accel.readRegister(ADXL343_REG_INT_SOURCE);
 #endif
 
   // publish the info before going to sleep
@@ -605,8 +648,7 @@ void sendDataToUbidots(bool scheduled)
     }
   }
 
-// this blinks the onboard LED to flag we are about to send data to ubidots
-#ifdef DEBUGGING
+  // this blinks the onboard LED to flag we are about to send data to ubidots
   digitalWrite(D7, HIGH);
   delay(250);
   digitalWrite(D7, LOW);
@@ -618,7 +660,6 @@ void sendDataToUbidots(bool scheduled)
   digitalWrite(D7, HIGH);
   delay(250);
   digitalWrite(D7, LOW);
-#endif
 
   ubidotsTime = millis();
 
@@ -646,7 +687,9 @@ void sendDataToUbidots(bool scheduled)
         jw.insertKeyValue("temp_ds18b20", temp_DS18B20_fahrenheit);
       }
 
+#ifdef USE_ADT7410
       jw.insertKeyValue("temp_adt7410", temp_ADT7410_fahrenheit);
+#endif
     }
     else
     {
@@ -658,7 +701,9 @@ void sendDataToUbidots(bool scheduled)
         jw.insertKeyValue("temp_ds18b20", temp_DS18B20_celsius);
       }
 
+#ifdef USE_ADT7410
       jw.insertKeyValue("temp_adt7410", temp_ADT7410_celsius);
+#endif
     }
 
     // add accel info
@@ -968,9 +1013,9 @@ void getAcceleration()
 void adxl343_int1_isr(void)
 {
   // Log.info("isr triggered");
-  g_int_stats.activity++;
-  g_int_stats.total++;
-  g_ints_fired++;
+  // g_int_stats.activity++;
+  // g_int_stats.total++;
+  // g_ints_fired++;
   movementDetected = true;
 }
 
@@ -1013,16 +1058,6 @@ void accelConfiguration(void)
    *  two different interrupt pins, so that when an interrupt fires, based
    *  on the 'isr' function that is called, you already know the int source.
    */
-
-  // this is not needed when the device sleeps
-#ifdef ALWAYS_ONLINE
-  /* Attach interrupt inputs on the MCU. */
-  if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, RISING))
-  // if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, CHANGE))
-  {
-    Log.error("Could not attach interrupt to pin!");
-  }
-#endif
 
   /* Set the range to whatever is appropriate for your project */
   accel.setRange(ADXL343_RANGE);
@@ -1094,7 +1129,7 @@ void accelConfiguration(void)
   // 0   0   Link  AUTO_SLEEP  Measure   Sleep  Wakeup
   // value:
   // 0   0   0     0           0(then 1) 0      0  0
-  // 
+  //
   // so we need to set to one value then another value, here's what the datasheet says:
   // When clearing the AUTO_SLEEP bit, it is recommended that the
   // part be placed into standby mode and then set back to measurement mode with a subsequent write. This is done to ensure that
@@ -1105,17 +1140,39 @@ void accelConfiguration(void)
   accel.writeRegister(ADXL343_REG_POWER_CTL, 0x00);
 
   accel.writeRegister(ADXL343_REG_POWER_CTL, 0x08);
+
+  // this is not needed when the device sleeps
+#ifdef ALWAYS_ONLINE
+  /* Attach interrupt inputs on the MCU. */
+  if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, RISING))
+  // if (not attachInterrupt(ADXL343_INPUT_PIN_INT1, adxl343_int1_isr, CHANGE))
+  {
+    Log.error("Could not attach interrupt to pin!");
+  }
+#endif
+
+  // READ register 0x30 to clear int flag -> if the flag was set from before, previous runs of firmware, etc, this will clear it
+  // from datasheet:
+  // The interrupt functions are latched and cleared by eitherreading the
+  // data registers (Address 0x32 to Address 0x37) until the interrupt
+  // condition is no longer valid for the data-related interrupts or by
+  // reading the INT_SOURCE register (Address 0x30) for the
+  // remaining interrupts. This section describes the interrupts
+  // that can be set in the INT_ENABLE register and monitored
+  // in the INT_SOURCE register.
+  Log.info("Clearing int flag");
+  accel.readRegister(ADXL343_REG_INT_SOURCE);
 }
 
-void accelDetected()
-{
-  while (g_ints_fired)
-  {
-    Log.info("ACTIVITY detected!");
-    /* Decrement the unhandled int counter. */
-    g_ints_fired--;
-  }
-}
+// void accelDetected()
+// {
+//   while (g_ints_fired)
+//   {
+//     Log.info("ACTIVITY detected!");
+//     /* Decrement the unhandled int counter. */
+//     g_ints_fired--;
+//   }
+// }
 
 #endif
 
@@ -1147,7 +1204,7 @@ void accelerometerInitUpdateFunction()
 void accelerometerInitExitFunction()
 {
   // clear flag of fired accel events
-  g_ints_fired = 0;
+  // g_ints_fired = 0;
   movementDetected = false;
 }
 
@@ -1161,17 +1218,17 @@ void accelerometerOkEnterFunction()
 void accelerometerOkUpdateFunction()
 {
 
-  while (g_ints_fired)
-  {
-    Log.info("ACTIVITY detected!");
-    /* Decrement the unhandled int counter. */
-    g_ints_fired--;
-  }
+  // while (g_ints_fired)
+  // {
+  //   Log.info("ACTIVITY detected!");
+  //   /* Decrement the unhandled int counter. */
+  //   g_ints_fired--;
+  // }
 
   if (movementDetected)
   {
-    accelerometerStateMachine.transitionTo(accelerometerAlarmState);
     Log.info("Movement detected, transition to accelerometerAlarmState");
+    accelerometerStateMachine.transitionTo(accelerometerAlarmState);
   }
 }
 void accelerometerOkExitFunction()
@@ -1184,6 +1241,7 @@ void accelerometerAlarmEnterFunction()
   Particle.publish("ALARM", "Accelerometer detected movement", PRIVATE | WITH_ACK);
 #endif
   accelerometerSetState(STATE_ALARM);
+
   // send alarm to ubidots
   sendDataToUbidots(RIGHT_NOW);
 }
@@ -1198,13 +1256,25 @@ void accelerometerAlarmUpdateFunction()
   // publish the info before going to ok state
   publishStatus();
 
+  // READ register 0x30 to clear int flag
+  // from datasheet:
+  // The interrupt functions are latched and cleared by eitherreading the
+  // data registers (Address 0x32 to Address 0x37) until the interrupt
+  // condition is no longer valid for the data-related interrupts or by
+  // reading the INT_SOURCE register (Address 0x30) for the
+  // remaining interrupts. This section describes the interrupts
+  // that can be set in the INT_ENABLE register and monitored
+  // in the INT_SOURCE register.
+  Log.info("Clearing int flag");
+  accel.readRegister(ADXL343_REG_INT_SOURCE);
+
   accelerometerStateMachine.transitionTo(accelerometerOkState);
   Log.info("Alarm sent, transition to accelerometerOkState");
 }
 void accelerometerAlarmExitFunction()
 {
   // clear flag of fired accel events
-  g_ints_fired = 0;
+  // g_ints_fired = 0;
   movementDetected = false;
 }
 
