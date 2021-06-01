@@ -116,7 +116,7 @@ void accelerometerSetState(String newState);
 // if commented out, the device will sleep and wake either:
 //  - on movement detected at any time
 //  - every NORMAL_SLEEP_CYCLE (4hs) to report periodically to the cloud
-#define ALWAYS_ONLINE
+// #define ALWAYS_ONLINE
 
 // if not always online, the device will sleep for this time. It reports status to the cloud every time it wakes up.
 // units: MINUTES (example: 240 minutes => 4 hours)
@@ -242,6 +242,8 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
              that can be set in the INT_ENABLE register and monitored
              in the INT_SOURCE register.
 
+ * changes in version 0.16:
+         * Adding Telegram alert notifications
 
 
 How to create the Particle webhook to Ubidots:
@@ -250,7 +252,7 @@ https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubid
 *******************************************************************************/
 String firmwareVersion()
 {
-  return "BeehiveMonitor - Version 0.15";
+  return "BeehiveMonitor - Version 0.16";
 }
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -1244,7 +1246,11 @@ void accelerometerAlarmEnterFunction()
 
   // send alarm to ubidots
   sendDataToUbidots(RIGHT_NOW);
+
+  // send alarm to Telegram
+  publishQueue.publish("telegramWebhook", "Movement detected!", 60, PRIVATE, WITH_ACK);
 }
+
 void accelerometerAlarmUpdateFunction()
 {
   // stay here a minimum time
