@@ -1,0 +1,79 @@
+LABCENTER PROTEUS TOOL INFORMATION FILE
+=======================================
+
+In case of difficulty, please e-mail support@labcenter.co.uk
+
+Tool set up for Proteus layout 'PCB.pdsprj'.
+CADCAM generated at 10:02:34 PM on Sunday, April 25, 2021.
+
+File List
+---------
+Top Copper              : Gerber - CADCAM Top Copper.GBR
+Bottom Copper           : Gerber - CADCAM Bottom Copper.GBR
+Top Silk Screen         : Gerber - CADCAM Top Silk Screen.GBR
+Top Solder Resist       : Gerber - CADCAM Top Solder Resist.GBR
+Bottom Solder Resist    : Gerber - CADCAM Bottom Solder Resist.GBR
+Top SMT Paste           : Gerber - CADCAM Top SMT Paste.GBR
+Mechanical 1            : Gerber - CADCAM Mechanical 1.GBR
+Drill                   : Gerber - CADCAM Drill.DRL
+Netlist                 : Gerber - CADCAM Netlist.IPC
+
+Photoplotter Setup
+------------------
+Format: RS274X, ASCII, 2.4, imperial, absolute, eob=*, LZO
+Notes:  D=Diameter, S=Side, W=Width, H=Height, C=Chamfer, I=Index
+
+D10	CIRCLE  D=25th                                                            DRAW 
+D11	CIRCLE  D=10th                                                            DRAW 
+D12	CIRCLE  D=30th                                                            FLASH
+D13	CIRCLE  D=6th                                                             DRAW 
+D14	CIRCLE  D=75th                                                            FLASH
+D15	CIRCLE  D=65.354th                                                        FLASH
+D16	CIRCLE  D=70th                                                            FLASH
+D17	CIRCLE  D=150th                                                           FLASH
+D18	CIRCLE  D=76.772th                                                        FLASH
+D19	SQUARE  S=64.961th                                                        FLASH
+D70	CIRCLE  D=10th                                                            FLASH
+D71	CIRCLE  D=64.961th                                                        FLASH
+D20	RECT    W=40th                H=60th                                      FLASH
+D21	RECT    W=48th                H=78th                                      FLASH
+D22	RECT    W=60th                H=40th                                      FLASH
+D23	RECT    W=59.055th            H=98.425th                                  FLASH
+D24	SQUARE  S=275.591th                                                       FLASH
+D25	CIRCLE  D=4th                                                             DRAW 
+D26	CIRCLE  D=3.937th                                                         DRAW 
+D27	CIRCLE  D=1.25th                                                          DRAW 
+D28	CIRCLE  D=7.874th                                                         DRAW 
+D29	CIRCLE  D=95th                                                            FLASH
+D72	CIRCLE  D=90th                                                            FLASH
+D73	PPAD    W=64.96th             H=64.96th             I=0                   FLASH
+D30	PPAD    W=60th                H=80th                I=1                   FLASH
+D31	PPAD    W=68th                H=98th                I=2                   FLASH
+D32	PPAD    W=80th                H=60th                I=3                   FLASH
+D33	PPAD    W=59.056th            H=98.426th            I=4                   FLASH
+D34	PPAD    W=275.59th            H=275.59th            I=5                   FLASH
+D35	CIRCLE  D=5th                                                             DRAW 
+D36	CIRCLE  D=2.5th                                                           DRAW 
+
+NC Drill Setup
+--------------
+Format: Excellon, ASCII, 2.4, imperial, absolute, eob=<CR><LF>, no zero suppression.
+Notes:  Tool sizes are diameters. Layer sets are in brackets - 0=TOP, 15=BOTTOM, 1-14=INNER.
+
+T01	15th (0-15) Plated
+T02	40th (0-15) Plated
+T03	43.7th (0-15) Plated
+T04	100th (0-15) Plated
+T05	51.2th (0-15) Plated
+T06	43.3th (0-15) Plated
+
+Layer Stackup
+-------------
+Top Solder Resist        : 0.4th      Resist
+Top Copper               : 1.4th      Copper
+Core                     : 58.4th     FR4
+Bottom Copper            : 1.4th      Copper
+Bottom Solder Resist     : 0.4th      Resist
+
+
+[END OF FILE]

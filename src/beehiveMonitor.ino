@@ -211,6 +211,8 @@ END -> USER CAN CHANGE THESE DEFINES ABOVE
  * changes in version 0.16:
          * Adding Telegram alert notifications
 
+ * changes in version 0.17:
+         * Fine-tuning of parameters
 
 How to create the Particle webhook to Ubidots:
 https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubidots-using-particle-webhooks
@@ -218,7 +220,7 @@ https://help.ubidots.com/en/articles/513304-connect-your-particle-device-to-ubid
 *******************************************************************************/
 String firmwareVersion()
 {
-  return "BeehiveMonitor - Version 0.16";
+  return "BeehiveMonitor - Version 0.17";
 }
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
@@ -322,7 +324,7 @@ Adafruit_ADXL343 accel = Adafruit_ADXL343(12345);
 // in my understanding, this is the SENSITIVITY of the ACTIVITY DETECTION
 // 0x20: if I tap on the table the board is, the device wakes up
 // 0x50: I need to tap hard
-#define ADXL343_SENSITIVITY 0x50
+#define ADXL343_SENSITIVITY 0x35
 
 /** The input pin to enable the interrupt on, connected to INT1 on the ADXL. */
 #define ADXL343_INPUT_PIN_INT1 A0
@@ -760,7 +762,7 @@ void publishStatus()
   snprintf(tempChar, SMALL_BUFFER, ", SoC: %.2f%%", batterySoc);
   strcat(pubChar, tempChar);
 
-  const char *batteryContext[7] = {"Unknown", "Not Charging", "Charging", "Charged", "Discharging", "Fault", "Diconnected"};
+  const char *batteryContext[7] = {"Unknown", "Not Charging", "Charging", "Charged", "Discharging", "Fault", "Disconnected"};
   // Battery conect information - https://docs.particle.io/reference/device-os/firmware/boron/#batterystate-
   snprintf(tempChar, SMALL_BUFFER, ", State: %s", batteryContext[System.batteryState()]);
   strcat(pubChar, tempChar);
